@@ -59,7 +59,7 @@ export const CHAINS: Record<number, ChainConfig> = {
   },
 };
 
-export const SOURCE_CHAINS = [84532, 421614, 11155111];
+export const SOURCE_CHAINS = [84532, 421614, 11155111, 11155420];
 export const CANONICAL_CHAIN = ARC_CHAIN_ID;
 
 export const getChain = (chainId: number) => CHAINS[chainId];

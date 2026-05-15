@@ -410,6 +410,10 @@ export default function VaultDetailsPage() {
       if (!hasCctpDomain(claimDestinationChain)) {
         throw new Error('CCTP is not configured for the selected destination chain.');
       }
+      const destinationDomain = sourceConfig.cctpDomain;
+      if (typeof destinationDomain !== 'number') {
+        throw new Error('CCTP is not configured for the selected destination chain.');
+      }
 
       const arcUsdc = getAddress(arcConfig.usdc);
       const arcTokenMessenger = getAddress(arcConfig.cctpTokenMessenger || '');
@@ -461,7 +465,7 @@ export default function VaultDetailsPage() {
         functionName: 'depositForBurn',
         args: [
           claimAmountUnits,
-          sourceConfig.cctpDomain,
+          destinationDomain,
           toBytes32Address(getAddress(activeAddress)),
           arcUsdc,
           ZERO_BYTES32,
@@ -725,6 +729,10 @@ export default function VaultDetailsPage() {
       if (!hasCctpDomain(withdrawDestination)) {
         throw new Error('CCTP is not configured for the selected destination chain.');
       }
+      const destinationDomain = sourceConfig.cctpDomain;
+      if (typeof destinationDomain !== 'number') {
+        throw new Error('CCTP is not configured for the selected destination chain.');
+      }
 
       const arcUsdc = getAddress(arcConfig.usdc);
       const arcTokenMessenger = getAddress(arcConfig.cctpTokenMessenger || '');
@@ -774,7 +782,7 @@ export default function VaultDetailsPage() {
         functionName: 'depositForBurn',
         args: [
           userReceivesUnits,
-          sourceConfig.cctpDomain,
+          destinationDomain,
           toBytes32Address(getAddress(activeAddress)),
           arcUsdc,
           ZERO_BYTES32,
