@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS vaults (
     unlock_at TIMESTAMPTZ NOT NULL,
     source_chain INTEGER NOT NULL,
     destination_chain INTEGER,
-    bridge_protocol VARCHAR(20) NOT NULL CHECK (bridge_protocol IN ('CCTP', 'LayerZero')),
+    bridge_protocol VARCHAR(20) NOT NULL CHECK (bridge_protocol = 'CCTP'),
     token_address VARCHAR(255),
     vault_type VARCHAR(20) NOT NULL CHECK (vault_type IN ('FIXED', 'FLEXIBLE')),
     status VARCHAR(20) NOT NULL CHECK (status IN ('ACTIVE', 'MATURE', 'CLAIMED', 'FAILED')),
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS vault_deposits (
     deposited_at TIMESTAMPTZ DEFAULT NOW(),
     source_chain INTEGER NOT NULL,
     bridge_tx_hash VARCHAR(255),
-    bridge_protocol VARCHAR(20) NOT NULL CHECK (bridge_protocol IN ('CCTP', 'LayerZero')),
+    bridge_protocol VARCHAR(20) NOT NULL CHECK (bridge_protocol = 'CCTP'),
     CONSTRAINT positive_deposit CHECK (amount > 0)
 );
 
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS bridge_transactions (
     from_chain INTEGER NOT NULL,
     to_chain INTEGER NOT NULL,
     amount NUMERIC(30, 6) NOT NULL,
-    bridge_protocol VARCHAR(20) NOT NULL CHECK (bridge_protocol IN ('CCTP', 'LayerZero')),
+    bridge_protocol VARCHAR(20) NOT NULL CHECK (bridge_protocol = 'CCTP'),
     token_address VARCHAR(255),
     status VARCHAR(20) NOT NULL CHECK (status IN ('PENDING', 'COMPLETE', 'FAILED')),
     attestation_data TEXT,

@@ -163,7 +163,7 @@ export default function Home() {
                 <div>
                   <h3 className="text-xl font-bold text-light mb-2">Bridge & Lock</h3>
                   <p className="text-light/70">
-                    Tokens are bridged from your source chain to Arc Testnet via CCTP or LayerZero.
+                    Tokens are bridged from your source chain to Arc Testnet via Circle CCTP.
                   </p>
                 </div>
               </div>

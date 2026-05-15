@@ -60,7 +60,7 @@ npm run dev
 ## Architecture
 
 - **Canonical Settlement:** Arc Testnet
-- **Bridges:** Circle CCTP (stablecoins), LayerZero (any ERC-20)
+- **Bridges:** Circle CCTP for USDC
 - **Auth:** Injected wallet signatures
 - **Database:** Supabase PostgreSQL
 - **Frontend:** React 18 + Tailwind + Next.js

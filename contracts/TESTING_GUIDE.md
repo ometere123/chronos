@@ -43,7 +43,7 @@ npm run gas-report
 | ProofOfReserves | `test/ProofOfReserves.test.js` | 140+ | 95%+ |
 | GovernanceTimelock | `test/GovernanceTimelock.test.js` | 130+ | 95%+ |
 | CCTPReceiver | `test/CCTPReceiver.test.js` | 110+ | 95%+ |
-| LayerZeroReceiver | `test/LayerZeroReceiver.test.js` | 150+ | 95%+ |
+| CCTPReceiver | `test/CCTPReceiver.test.js` | receiver tests | 95%+ |
 
 ---
 
@@ -58,7 +58,7 @@ npx hardhat test test/BridgeOrchestrator.test.js
 npx hardhat test test/ProofOfReserves.test.js
 npx hardhat test test/GovernanceTimelock.test.js
 npx hardhat test test/CCTPReceiver.test.js
-npx hardhat test test/LayerZeroReceiver.test.js
+npx hardhat test test/CCTPReceiver.test.js
 ```
 
 ### Run Specific Test Suite
@@ -130,7 +130,7 @@ npx hardhat test --grep "Access Control|Reentrancy|Validation"
 - ✅ Vault creation and management
 - ✅ Deposit and withdrawal flows
 - ✅ Claiming mature vaults
-- ✅ Bridge operations (CCTP, LayerZero)
+- ✅ Bridge operations (CCTP)
 - ✅ Reserve verification
 - ✅ Governance upgrades
 
@@ -154,7 +154,7 @@ npx hardhat test --grep "Edge Cases|Multiple|Large|Concurrent"
 ### Integration Tests (110+ cases)
 - ✅ Complete vault lifecycle
 - ✅ Multi-contract interactions
-- ✅ CCTP and LayerZero flows
+- ✅ CCTP flows
 - ✅ Upgrade workflows
 
 **Run integration tests:**
@@ -323,7 +323,7 @@ contracts/
 │   ├── ProofOfReserves.sol
 │   ├── GovernanceTimelock.sol
 │   ├── CCTPReceiver.sol
-│   └── LayerZeroReceiver.sol
+│   └── CCTPReceiver.sol
 ├── test/
 │   ├── TimeLockVault.test.js
 │   ├── VaultFactory.test.js
@@ -332,7 +332,7 @@ contracts/
 │   ├── ProofOfReserves.test.js
 │   ├── GovernanceTimelock.test.js
 │   ├── CCTPReceiver.test.js
-│   ├── LayerZeroReceiver.test.js
+│   ├── CCTPReceiver.test.js
 │   └── mocks/
 │       ├── MockERC20.sol
 │       ├── MockImplementation.sol

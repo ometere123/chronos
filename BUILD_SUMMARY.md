@@ -14,15 +14,15 @@ All smart contracts fully implemented and ready to compile:
 - ✅ GovernanceTimelock.sol (7-day upgrade delay)
 - ✅ TimeLockVault.sol (core vault logic)
 - ✅ VaultFactory.sol (vault registry & stats)
-- ✅ BridgeOrchestrator.sol (CCTP + LayerZero coordination)
+- ✅ BridgeOrchestrator.sol (CCTP coordination)
 - ✅ ProofOfReserves.sol (real-time transparency)
 - ✅ CCTPReceiver.sol (source chain receivers)
-- ✅ LayerZeroReceiver.sol (LayerZero receivers)
+- ✅ CCTPReceiver.sol (CCTP receiver)
 
 **Features:**
 - FIXED vaults (immutable, 0% penalty)
 - FLEXIBLE vaults (0.5% early withdrawal penalty)
-- Multi-chain support (CCTP + LayerZero)
+- Multi-chain USDC support through CCTP
 - Add to vault functionality
 - Reentrancy protection
 - Access control
@@ -52,7 +52,7 @@ All smart contracts fully implemented and ready to compile:
 - Vault service layer
 - Bridge service layer
 - Event listener service (Arc polling)
-- Bridge tracker service (CCTP/LayerZero monitoring)
+- Bridge tracker service (CCTP monitoring)
 - Gas estimation service
 
 ---
@@ -129,7 +129,7 @@ GET    /api/health                 // Health check
 
 **Services to implement:**
 - vaultService (CRUD, filtering)
-- bridgeService (CCTP/LayerZero coordination)
+- bridgeService (CCTP coordination)
 - bridgeTrackerService (attestation polling)
 - eventListenerService (Arc event polling every 12s)
 - gasEstimationService (fee calculation)
@@ -280,7 +280,7 @@ Implement service layer (vault, bridge, gas, reserves, listeners)
 
 - [ ] All backend routes implemented
 - [ ] Event listener service running
-- [ ] Bridge tracker monitoring CCTP/LayerZero
+- [ ] Bridge tracker monitoring CCTP
 - [ ] Database connected (Supabase)
 - [ ] Contracts deployed to Arc Testnet
 - [ ] Contract addresses in backend .env
@@ -314,7 +314,7 @@ Frontend (Next.js) ←→ Backend (Express) ←→ Database (Supabase PostgreSQL
                            ↓
                     Arc Testnet (RPC)
                            ↓
-               Smart Contracts + CCTP/LayerZero
+               Smart Contracts + CCTP
 ```
 
 ---

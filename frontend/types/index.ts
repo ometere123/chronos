@@ -1,6 +1,6 @@
 export type VaultType = 'FIXED' | 'FLEXIBLE';
 export type VaultStatus = 'ACTIVE' | 'MATURE' | 'CLAIMED' | 'FAILED';
-export type BridgeProtocol = 'CCTP' | 'LayerZero';
+export type BridgeProtocol = 'CCTP';
 
 export interface Vault {
   vaultId: string;

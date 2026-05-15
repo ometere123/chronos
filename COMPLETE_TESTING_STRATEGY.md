@@ -42,7 +42,7 @@
 5. ProofOfReserves (140+ tests)
 6. GovernanceTimelock (130+ tests)
 7. CCTPReceiver (110+ tests)
-8. LayerZeroReceiver (150+ tests)
+8. CCTPReceiver (receiver tests)
 
 **Test Categories:**
 - ✅ Core functionality (vault creation, deposits, claims)
@@ -72,7 +72,7 @@ npm run gas-report         # Gas analysis
 - ✅ Parallel vault management (5+ vaults)
 - ✅ Flexible vault with early withdrawal
 - ✅ CCTP bridge inbound flow
-- ✅ LayerZero bridge inbound flow
+- ✅ CCTP bridge inbound flow
 - ✅ Dual protocol support
 - ✅ Reserve verification across vaults
 - ✅ Chain tracking (Base, Arbitrum, Ethereum)
@@ -424,7 +424,7 @@ CHRONOS/
 │   │   ├── ProofOfReserves.test.js            (140+ tests)
 │   │   ├── GovernanceTimelock.test.js         (130+ tests)
 │   │   ├── CCTPReceiver.test.js               (110+ tests)
-│   │   ├── LayerZeroReceiver.test.js          (150+ tests)
+│   │   ├── CCTPReceiver.test.js
 │   │   ├── integration/
 │   │   │   └── ContractIntegration.test.js    (350+ tests)
 │   │   └── mocks/
@@ -476,7 +476,7 @@ CHRONOS/
 
 ### Bridge Requirements
 - ✅ CCTP integration
-- ✅ LayerZero integration
+- ✅ CCTP integration
 - ✅ Dual protocol support
 
 ### Coverage Requirement

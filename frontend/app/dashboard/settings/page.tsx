@@ -139,7 +139,7 @@ export default function SettingsPage() {
         <h2 className="text-xl font-bold text-primary mb-4">About CHRONOS</h2>
         <ul className="space-y-2 text-light/70 text-sm">
           <li>Non-custodial time-locked vaults</li>
-          <li>Multi-chain bridge support (CCTP + LayerZero)</li>
+          <li>Multi-chain USDC bridge support through Circle CCTP</li>
           <li>FIXED and FLEXIBLE vault types</li>
           <li>Open-source and auditable</li>
           <li>Real-time proof of reserves</li>

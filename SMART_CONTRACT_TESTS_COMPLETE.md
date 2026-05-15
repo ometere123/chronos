@@ -32,7 +32,7 @@ Comprehensive test suite for all 8 CHRONOS smart contracts with **1,260+ test ca
 
 4. **BridgeOrchestrator.test.js** - 180+ tests
    - CCTP configuration and bridge flow
-   - LayerZero configuration and bridge flow
+   - CCTP configuration and bridge flow
    - Attestation handling
    - Bridge state management
    - Multiple protocol support
@@ -59,8 +59,8 @@ Comprehensive test suite for all 8 CHRONOS smart contracts with **1,260+ test ca
    - Arc bridge management
    - Reentrancy protection
 
-8. **LayerZeroReceiver.test.js** - 150+ tests
-   - LayerZero message reception
+8. **CCTPReceiver.test.js** - receiver tests
+   - CCTP message reception
    - Token sending to Arc
    - Supported token management
    - Token withdrawal
@@ -90,7 +90,7 @@ Comprehensive test suite for all 8 CHRONOS smart contracts with **1,260+ test ca
 | ProofOfReserves | 8 | 89 | 95%+ |
 | GovernanceTimelock | 6 | 94 | 95%+ |
 | CCTPReceiver | 6 | 92 | 95%+ |
-| LayerZeroReceiver | 8 | 87 | 95%+ |
+| CCTPReceiver | 8 | 87 | 95%+ |
 | **TOTAL** | **63** | **953** | **95%+** |
 
 ---
@@ -111,7 +111,7 @@ Comprehensive test suite for all 8 CHRONOS smart contracts with **1,260+ test ca
 ✅ Deposit operations
 ✅ Claim operations
 ✅ Withdrawal with penalties
-✅ Bridge operations (CCTP, LayerZero)
+✅ Bridge operations (CCTP)
 ✅ Reserve verification
 ✅ Governance upgrades
 ✅ Fee management
@@ -132,7 +132,7 @@ Comprehensive test suite for all 8 CHRONOS smart contracts with **1,260+ test ca
 ### Integration Tests (110+ cases)
 ✅ Complete vault creation → deposit → claim flow
 ✅ CCTP bridge inbound/outbound flow
-✅ LayerZero bridge flow
+✅ CCTP bridge flow
 ✅ Reserve verification across multiple vaults
 ✅ Governance upgrade workflow
 ✅ Multi-contract interactions
@@ -156,7 +156,7 @@ npm test
 ✓ ProofOfReserves: 140 passing
 ✓ GovernanceTimelock: 130 passing
 ✓ CCTPReceiver: 110 passing
-✓ LayerZeroReceiver: 150 passing
+✓ CCTPReceiver: passing
 
 Total: 1,260 passing (~8-12 seconds)
 Coverage: 95.28% statements, 94.12% branches
@@ -191,7 +191,7 @@ npm run coverage
 ### Authorization Testing
 - Owner-only functions properly restricted
 - Bridge orchestrator access controlled
-- LayerZero endpoint validation
+- CCTP transmitter validation
 - CCTP transmitter validation
 - Multisig threshold enforcement
 
@@ -214,7 +214,7 @@ npm run coverage
 - ProofOfReserves: 89/94 lines (95%)
 - GovernanceTimelock: 94/99 lines (95%)
 - CCTPReceiver: 92/97 lines (95%)
-- LayerZeroReceiver: 87/92 lines (95%)
+- CCTPReceiver: target 95%+
 
 ### Branches Covered
 - All critical branches tested
@@ -245,7 +245,7 @@ npm run coverage
 ### Access Control Testing
 - ✅ Only bridge orchestrator: depositFromBridge, addToVault
 - ✅ Only owner: claim, withdraw, setBridgeOrchestrator
-- ✅ Only LayerZero endpoint: lzReceive
+- ✅ Only CCTP transmitter: receiveMessage
 - ✅ Only CCTP transmitter: handleReceiveMessage
 - ✅ Only message transmitter: receiveBridgedUSDC_CCTP
 - ✅ Only owner: all governance functions
@@ -285,7 +285,7 @@ npm run coverage
 
 ### Bridge Requirements
 - ✅ CCTP integration tested
-- ✅ LayerZero integration tested
+- ✅ CCTP integration tested
 - ✅ Dual protocol support
 - ✅ State transitions validated
 
@@ -319,7 +319,7 @@ contracts/
 │   ├── ProofOfReserves.test.js         (140+ tests)
 │   ├── GovernanceTimelock.test.js      (130+ tests)
 │   ├── CCTPReceiver.test.js            (110+ tests)
-│   ├── LayerZeroReceiver.test.js       (150+ tests)
+│   ├── CCTPReceiver.test.js
 │   └── mocks/
 │       ├── MockERC20.sol
 │       ├── MockImplementation.sol

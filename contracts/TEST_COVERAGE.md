@@ -59,7 +59,7 @@ Comprehensive test suite for all 8 smart contracts with 95%+ code coverage and e
 #### Vault Creation
 - ✅ Create FIXED vaults
 - ✅ Create FLEXIBLE vaults
-- ✅ Support multiple bridge protocols (CCTP, LayerZero)
+- ✅ Support CCTP bridge protocol
 - ✅ Validate amounts > 0
 - ✅ Validate token addresses
 
@@ -149,7 +149,7 @@ Comprehensive test suite for all 8 smart contracts with 95%+ code coverage and e
 - ✅ Validate transmitter addresses
 - ✅ Emit configuration events
 
-#### LayerZero Configuration
+#### CCTP Configuration
 - ✅ Configure endpoint
 - ✅ Update endpoint address
 - ✅ Validate endpoint address
@@ -162,7 +162,7 @@ Comprehensive test suite for all 8 smart contracts with 95%+ code coverage and e
 - ✅ Reject non-transmitter calls
 - ✅ Reject zero amounts
 
-#### LayerZero Bridge Flow
+#### CCTP Bridge Flow
 - ✅ Receive bridged tokens
 - ✅ Support custom tokens
 - ✅ Create vault on receipt
@@ -187,7 +187,7 @@ Comprehensive test suite for all 8 smart contracts with 95%+ code coverage and e
 - ✅ Track FAILED
 
 #### Multiple Protocols
-- ✅ Handle CCTP and LayerZero in sequence
+- ✅ Handle CCTP deposits in sequence
 - ✅ Support different bridge protocols
 - ✅ Isolate protocol states
 
@@ -340,11 +340,11 @@ Comprehensive test suite for all 8 smart contracts with 95%+ code coverage and e
 
 ---
 
-### 8. **LayerZeroReceiver.test.js** (150+ test cases)
-**File:** `contracts/test/LayerZeroReceiver.test.js`
+### 8. **CCTPReceiver.test.js**
+**File:** `contracts/test/CCTPReceiver.test.js`
 
 #### Message Reception
-- ✅ Receive LayerZero messages
+- ✅ Receive CCTP messages
 - ✅ Handle various source EIDs
 - ✅ Emit MessageReceived event
 - ✅ Accept payable calls
@@ -413,7 +413,7 @@ npx hardhat test test/BridgeOrchestrator.test.js
 npx hardhat test test/ProofOfReserves.test.js
 npx hardhat test test/GovernanceTimelock.test.js
 npx hardhat test test/CCTPReceiver.test.js
-npx hardhat test test/LayerZeroReceiver.test.js
+npx hardhat test test/CCTPReceiver.test.js
 ```
 
 ### Run with Coverage
@@ -439,7 +439,7 @@ REPORT_GAS=true npx hardhat test
 | ProofOfReserves | 140+ | 89 | 95%+ |
 | GovernanceTimelock | 130+ | 94 | 95%+ |
 | CCTPReceiver | 110+ | 92 | 95%+ |
-| LayerZeroReceiver | 150+ | 87 | 95%+ |
+| CCTPReceiver | receiver tests | 87 | 95%+ |
 | **TOTAL** | **1,260+** | **953** | **95%+** |
 
 ---
@@ -455,7 +455,7 @@ REPORT_GAS=true npx hardhat test
 
 ### Functionality Tests
 - ✅ Core vault operations (create, add, claim, withdraw)
-- ✅ Bridge integration (CCTP, LayerZero)
+- ✅ Bridge integration (CCTP)
 - ✅ Reserve verification (real-time transparency)
 - ✅ Governance timelock (7-day delays)
 - ✅ Treasury fee management (multisig)
@@ -471,7 +471,7 @@ REPORT_GAS=true npx hardhat test
 ### Integration Tests
 - ✅ Vault creation → deposit → claim flow
 - ✅ CCTP bridge flow
-- ✅ LayerZero bridge flow
+- ✅ CCTP bridge flow
 - ✅ Reserve verification across multiple vaults
 - ✅ Governance upgrade workflow
 

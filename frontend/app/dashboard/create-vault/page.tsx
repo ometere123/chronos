@@ -36,7 +36,7 @@ interface FormData {
   customDuration: string;
   vaultType: 'FIXED' | 'FLEXIBLE';
   destinationChain: number;
-  bridgeProtocol: 'CCTP' | 'LayerZero';
+  bridgeProtocol: 'CCTP';
   tokenAddress: string;
 }
 
@@ -45,7 +45,7 @@ interface PendingCreateRecovery {
   duration: number;
   sourceChain: number;
   destinationChain: number;
-  bridgeProtocol: 'CCTP' | 'LayerZero';
+  bridgeProtocol: 'CCTP';
   tokenAddress: string;
   vaultType: 'FIXED' | 'FLEXIBLE';
   ownerAddress: string;

@@ -12,10 +12,10 @@
 - [x] **GovernanceTimelock.sol** - 7-day upgrade delay (no dependencies)
 - [x] **TimeLockVault.sol** - Core vault logic (holds tokens, tracks deposits)
 - [x] **VaultFactory.sol** - Vault creation and registry
-- [x] **BridgeOrchestrator.sol** - CCTP/LayerZero coordination
+- [x] **BridgeOrchestrator.sol** - CCTP coordination
 - [x] **ProofOfReserves.sol** - Real-time reserve transparency
 - [x] **CCTPReceiver.sol** - CCTP receiver on source chains
-- [x] **LayerZeroReceiver.sol** - LayerZero receiver on source chains
+- [x] **CCTPReceiver.sol** - CCTP receiver on source chains
 - [x] Hardhat configuration and package.json
 
 ### Backend (Express + Supabase) - Core Setup ✅
@@ -65,7 +65,7 @@
 - [ ] Proof of reserves route
 - [ ] User routes (get user vaults)
 - [ ] Event listener service (poll Arc events)
-- [ ] Bridge tracker service (CCTP & LayerZero monitoring)
+- [ ] Bridge tracker service (CCTP monitoring)
 - [ ] Gas estimation service
 - [ ] Proof of reserves service
 
@@ -105,7 +105,7 @@
    - Complete vault management endpoints
    - Bridge orchestration
    - Event listener service
-   - Bridge tracker for CCTP/LayerZero
+   - Bridge tracker for CCTP
 
 3. **Database & Supabase**
    - Run schema SQL in Supabase
@@ -173,7 +173,7 @@ CHRONOS/
 
 **Source Chains (Base, Arbitrum, Ethereum Sepolia):**
 1. CCTPReceiver.sol
-2. LayerZeroReceiver.sol
+2. CCTPReceiver.sol
 
 ---
 

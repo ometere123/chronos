@@ -401,11 +401,10 @@ describe('VaultFactory', () => {
       expect(userVaults.length).to.equal(count);
     });
 
-    it('should handle different bridge protocols', async () => {
+    it('should handle CCTP vaults from different source chains', async () => {
       const amount = ethers.parseEther('100');
       const duration = 7 * 24 * 60 * 60;
 
-      // CCTP
       let tx = await vaultFactory.createVault(
         amount,
         duration,
@@ -417,13 +416,12 @@ describe('VaultFactory', () => {
       );
       await expect(tx).to.emit(vaultFactory, 'VaultCreated');
 
-      // LayerZero
       tx = await vaultFactory.createVault(
         amount,
         duration,
-        84532,
+        421614,
         26,
-        1, // LayerZero
+        0,
         mockToken.address,
         0
       );

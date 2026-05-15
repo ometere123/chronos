@@ -65,16 +65,12 @@ export const gasEstimationService = {
   // Estimate bridge fee
   async estimateBridgeFee(amount, bridgeProtocol, fromChain, toChain) {
     try {
-      // Base fee varies by protocol and chain
-      let baseFee = 0;
-
-      if (bridgeProtocol === 'CCTP') {
-        // CCTP typically has lower fees (0.01-0.1%)
-        baseFee = parseFloat(amount) * 0.0005; // 0.05% placeholder
-      } else if (bridgeProtocol === 'LayerZero') {
-        // LayerZero fees vary by path (typically 0.05-0.2%)
-        baseFee = parseFloat(amount) * 0.001; // 0.1% placeholder
+      if (bridgeProtocol !== 'CCTP') {
+        throw new Error(`Unsupported bridge protocol: ${bridgeProtocol}`);
       }
+
+      // CCTP typically has lower fees (0.01-0.1%).
+      const baseFee = parseFloat(amount) * 0.0005; // 0.05% placeholder
 
       // Add gas costs based on destination
       const gasCosts = parseFloat(amount) * 0.0001; // 0.01% placeholder for gas
@@ -136,7 +132,6 @@ export const gasEstimationService = {
         'claim-vault': 150000,
         'withdraw-flexible': 120000,
         'bridge-cctp': 300000,
-        'bridge-lz': 350000
       };
 
       const baseGas = gasCosts[txType] || 200000;

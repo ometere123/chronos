@@ -3,9 +3,9 @@
 ## What's Been Built ✅
 
 ### Smart Contracts (100% Complete)
-8 production-ready Solidity contracts in `contracts/arc/`:
+7 production-ready Solidity contracts in `contracts/arc/`:
 - Treasury, GovernanceTimelock, TimeLockVault, VaultFactory
-- BridgeOrchestrator, ProofOfReserves, CCTPReceiver, LayerZeroReceiver
+- BridgeOrchestrator, ProofOfReserves, CCTPReceiver
 
 Ready to: `npm run compile` and `npm run test`
 
@@ -136,7 +136,7 @@ GET    /api/health
 
 ### Backend Services
 - Vault operations (CRUD)
-- Bridge orchestration (CCTP/LayerZero)
+- Bridge orchestration (CCTP)
 - Event listener (Arc Testnet polling)
 - Bridge tracker (attestation monitoring)
 - Gas estimation
@@ -206,7 +206,7 @@ PORT=3001
 
 🌉 **Bridges**
 - CCTP for USDC (stablecoins)
-- LayerZero for any ERC-20 token
+- Circle CCTP for USDC
 
 📱 **Design Approach**
 - Mobile-first responsive
@@ -227,7 +227,7 @@ PORT=3001
 1. [ ] Add smart contract unit tests (95%+ coverage)
 2. [ ] Integration tests for bridge flows
 3. [ ] Event listener service (Arc polling)
-4. [ ] Bridge tracker (CCTP/LayerZero)
+4. [ ] Bridge tracker (CCTP)
 
 ### Week 3
 1. [ ] Security audit of contracts
@@ -290,7 +290,7 @@ When ready, in Supabase SQL Editor:
 
 Will need testnet ETH for:
 - Base Sepolia (gas for CCTP)
-- Arbitrum Sepolia (gas for LayerZero)
+- Arbitrum Sepolia (gas for CCTP testing)
 - Ethereum Sepolia (gas for deposits)
 
 Get faucets:

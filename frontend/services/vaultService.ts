@@ -103,7 +103,7 @@ export const vaultService = {
     duration: number,
     sourceChain: number,
     destChain: number,
-    bridgeProtocol: 'CCTP' | 'LayerZero',
+    bridgeProtocol: 'CCTP',
     tokenAddress: string,
     vaultType: 'FIXED' | 'FLEXIBLE',
     ownerAddress?: string,

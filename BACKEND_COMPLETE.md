@@ -76,12 +76,12 @@
 - Handles reorg protection (100-block depth scanning)
 
 ### Bridge Tracker Service (`src/services/bridgeTrackerService.js`)
-**CCTP & LayerZero monitoring (5-minute intervals):**
+**CCTP monitoring (short polling interval):**
 - `start()` — Begin tracking pending bridges
 - `stop()` — Stop tracker
 - `trackPendingTransactions()` — Check all pending bridges
 - `trackCCTPTransaction()` — Monitor CCTP attestations
-- `trackLayerZeroTransaction()` — Monitor LayerZero messages
+- CCTP-only bridge tracker
 - `retryFailedBridge()` — Retry failed transaction
 - `submitCCTPAttestation()` — Submit and verify attestation
 - Auto-retry up to 10 times per transaction
@@ -89,7 +89,7 @@
 ### Gas Estimation Service (`src/services/gasEstimationService.js`)
 **Dynamic fee calculation:**
 - `getGasPrices()` — Fetch gas prices from RPC (testnet-aware)
-- `estimateBridgeFee()` — Calculate bridge fee (CCTP: 0.05%, LayerZero: 0.1%)
+- `estimateBridgeFee()` — Calculate CCTP bridge fee
 - `calculateFinalAmount()` — Compute amount after fees & penalties
 - `getDynamicGasEstimate()` — Estimate gas for transaction type
 - Returns: gasPrice, estimatedGas, estimatedCost
@@ -160,7 +160,7 @@ All responses follow this structure:
 
 ### Bridge Tracker
 - **Interval:** 5 minutes
-- **Purpose:** Monitor CCTP attestations and LayerZero messages
+- **Purpose:** Monitor CCTP attestations and destination mints
 - **Status:** Logged at startup
 - **Auto-Retries:** Up to 10 retries per transaction
 
@@ -226,9 +226,9 @@ Database: UPDATE vaults SET status='ACTIVE'
 
 Bridge Tracker (every 5m)
   ↓
-Circle API / LayerZero Endpoint
+Circle API
   ↓
-Service: trackCCTPTransaction() / trackLayerZeroTransaction()
+Service: trackCCTPTransaction()
   ↓
 Service: updateBridgeStatus()
   ↓
@@ -299,7 +299,7 @@ Automatically created from `src/db/schema.sql`:
 - users (address, Injected wallet_id, email)
 - vaults (vault_id, owner, amount, unlock_at, status)
 - vault_deposits (deposit tracking per vault)
-- bridge_transactions (CCTP/LayerZero)
+- bridge_transactions (CCTP)
 - protocol_stats (historical reserves)
 - audit_logs (error tracking)
 

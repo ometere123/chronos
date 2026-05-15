@@ -71,11 +71,15 @@ export class BridgeTrackerService {
       logger.info('Tracking pending bridge transactions', { count: pendingTransactions.length });
 
       for (const tx of pendingTransactions) {
-        if (tx.bridge_protocol === 'CCTP') {
-          await this.trackCCTPTransaction(tx);
-        } else if (tx.bridge_protocol === 'LayerZero') {
-          await this.trackLayerZeroTransaction(tx);
+        if (tx.bridge_protocol !== 'CCTP') {
+          logger.warn('Skipping unsupported bridge protocol', {
+            txHash: tx.tx_hash,
+            bridgeProtocol: tx.bridge_protocol,
+          });
+          continue;
         }
+
+        await this.trackCCTPTransaction(tx);
       }
     } catch (err) {
       logger.error('Error tracking pending transactions', { error: err.message });
@@ -218,24 +222,6 @@ export class BridgeTrackerService {
       }
 
       logger.error('Error tracking CCTP transaction', { error: err.message, txHash: transaction.tx_hash });
-
-      // Increment retry count
-      await bridgeService.incrementRetryCount(transaction.tx_hash);
-    }
-  }
-
-  // Track LayerZero transaction status
-  async trackLayerZeroTransaction(transaction) {
-    try {
-      logger.debug('Checking LayerZero transaction status', { txHash: transaction.tx_hash });
-
-      // In production, query LayerZero API or scan destination chain
-      // Check if message was received on destination
-
-      // For now, just log
-      logger.debug('LayerZero transaction pending', { txHash: transaction.tx_hash });
-    } catch (err) {
-      logger.error('Error tracking LayerZero transaction', { error: err.message, txHash: transaction.tx_hash });
 
       // Increment retry count
       await bridgeService.incrementRetryCount(transaction.tx_hash);

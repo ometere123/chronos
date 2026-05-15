@@ -43,14 +43,14 @@ Complete testing coverage across three layers:
 - ✅ Wait for maturity
 - ✅ Claim and verify final state
 
-#### LayerZero Bridge Integration
-- ✅ Bridge any token via LayerZero
+#### CCTP Bridge Integration
+- ✅ Bridge USDC via CCTP
 - ✅ Automatic vault creation
 - ✅ Support custom tokens
 - ✅ Complete claim flow
 
 #### Multi-Protocol Support
-- ✅ CCTP and LayerZero in sequence
+- ✅ CCTP deposits in sequence
 - ✅ Verify both vaults created
 - ✅ Verify combined stats
 
@@ -501,7 +501,7 @@ npm run test:all
 
 ### Contract Integration
 - [ ] All vault lifecycle flows working
-- [ ] Bridge protocols (CCTP, LayerZero) integrated
+- [ ] CCTP bridge protocol integrated
 - [ ] Reserve tracking accurate
 - [ ] Governance timelock enforced
 - [ ] Multi-user scenarios handled

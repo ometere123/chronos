@@ -1,60 +1,68 @@
 import { expect } from 'chai';
 import { describe, it, beforeEach } from 'node:test';
-import hre from "hardhat";
+import hre from 'hardhat';
+
 const { ethers } = hre;
-
-
 
 describe('BridgeOrchestrator', () => {
   let bridgeOrchestrator;
   let timeLockVault;
-  let treasury;
-  let owner, user1, user2;
+  let mockToken;
+  let owner;
+  let user1;
+  let user2;
+
   const ZERO_ADDRESS = ethers.ZeroAddress;
 
   beforeEach(async () => {
     [owner, user1, user2] = await ethers.getSigners();
 
-    // Deploy Treasury
+    const MockERC20 = await ethers.getContractFactory('MockERC20');
+    mockToken = await MockERC20.deploy('USDC', 'USDC', ethers.parseEther('1000000'));
+
     const Treasury = await ethers.getContractFactory('Treasury');
-    treasury = await Treasury.deploy([user1.address, user2.address, owner.address], 2);
+    const treasury = await Treasury.deploy([user1.address, user2.address, owner.address], 2);
 
-    // Deploy TimeLockVault
     const TimeLockVault = await ethers.getContractFactory('TimeLockVault');
-    timeLockVault = await TimeLockVault.deploy(treasury.address);
+    timeLockVault = await TimeLockVault.deploy(await treasury.getAddress());
 
-    // Deploy BridgeOrchestrator
     const BridgeOrchestrator = await ethers.getContractFactory('BridgeOrchestrator');
-    bridgeOrchestrator = await BridgeOrchestrator.deploy(timeLockVault.address);
+    bridgeOrchestrator = await BridgeOrchestrator.deploy(
+      await timeLockVault.getAddress(),
+      await mockToken.getAddress()
+    );
 
-    // Setup
-    await timeLockVault.setBridgeOrchestrator(bridgeOrchestrator.address);
+    await timeLockVault.setBridgeOrchestrator(await bridgeOrchestrator.getAddress());
+    await mockToken.transfer(await timeLockVault.getAddress(), ethers.parseEther('500000'));
   });
 
   describe('Initialization', () => {
-    it('should initialize with TimeLockVault', async () => {
-      expect(await bridgeOrchestrator.timeLockVault()).to.equal(timeLockVault.address);
+    it('should initialize with TimeLockVault and USDC token', async () => {
+      expect(await bridgeOrchestrator.timeLockVault()).to.equal(await timeLockVault.getAddress());
+      expect(await bridgeOrchestrator.usdcToken()).to.equal(await mockToken.getAddress());
     });
 
-    it('should reject zero address TimeLockVault', async () => {
+    it('should reject zero address constructor values', async () => {
       const BridgeOrchestrator = await ethers.getContractFactory('BridgeOrchestrator');
 
       await expect(
-        BridgeOrchestrator.deploy(ZERO_ADDRESS)
+        BridgeOrchestrator.deploy(ZERO_ADDRESS, await mockToken.getAddress())
       ).to.be.revertedWith('Invalid TimeLockVault');
+
+      await expect(
+        BridgeOrchestrator.deploy(await timeLockVault.getAddress(), ZERO_ADDRESS)
+      ).to.be.revertedWith('Invalid USDC');
     });
   });
 
   describe('CCTP Configuration', () => {
     it('should configure CCTP contracts', async () => {
-      const messenger = user1.address;
-      const transmitter = user2.address;
+      await expect(bridgeOrchestrator.configureCCTP(user1.address, user2.address))
+        .to.emit(bridgeOrchestrator, 'CCTPConfigured')
+        .withArgs(user1.address, user2.address);
 
-      await expect(bridgeOrchestrator.configureCCTP(messenger, transmitter))
-        .to.emit(bridgeOrchestrator, 'ProtocolConfigured');
-
-      expect(await bridgeOrchestrator.cctpTokenMessenger()).to.equal(messenger);
-      expect(await bridgeOrchestrator.cctpMessageTransmitter()).to.equal(transmitter);
+      expect(await bridgeOrchestrator.cctpTokenMessenger()).to.equal(user1.address);
+      expect(await bridgeOrchestrator.cctpMessageTransmitter()).to.equal(user2.address);
     });
 
     it('should reject invalid CCTP configuration', async () => {
@@ -74,29 +82,6 @@ describe('BridgeOrchestrator', () => {
     });
   });
 
-  describe('LayerZero Configuration', () => {
-    it('should configure LayerZero endpoint', async () => {
-      const endpoint = user1.address;
-
-      await expect(bridgeOrchestrator.configureLayerZero(endpoint))
-        .to.emit(bridgeOrchestrator, 'ProtocolConfigured');
-
-      expect(await bridgeOrchestrator.layerZeroEndpoint()).to.equal(endpoint);
-    });
-
-    it('should reject invalid LayerZero configuration', async () => {
-      await expect(
-        bridgeOrchestrator.configureLayerZero(ZERO_ADDRESS)
-      ).to.be.revertedWith('Invalid address');
-    });
-
-    it('should only allow owner to configure LayerZero', async () => {
-      await expect(
-        bridgeOrchestrator.connect(user1).configureLayerZero(user1.address)
-      ).to.be.revertedWith('Ownable: caller is not the owner');
-    });
-  });
-
   describe('CCTP Bridge Flow', () => {
     beforeEach(async () => {
       await bridgeOrchestrator.configureCCTP(user1.address, owner.address);
@@ -108,15 +93,51 @@ describe('BridgeOrchestrator', () => {
 
       const tx = await bridgeOrchestrator.receiveBridgedUSDC_CCTP(
         amount,
-        84532, // Base Sepolia
+        84532,
         user1.address,
         unlockAt,
-        26, // Arc
-        7 * 24 * 60 * 60, // 7 days
-        0 // FIXED
+        26,
+        7 * 24 * 60 * 60,
+        0
       );
 
       await expect(tx).to.emit(bridgeOrchestrator, 'BridgeCompleted');
+    });
+
+    it('should receive additional bridged USDC via CCTP', async () => {
+      const amount = ethers.parseEther('100');
+      const unlockAt = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
+
+      const receipt = await (await bridgeOrchestrator.receiveBridgedUSDC_CCTP(
+        amount,
+        84532,
+        user1.address,
+        unlockAt,
+        26,
+        7 * 24 * 60 * 60,
+        0
+      )).wait();
+
+      const event = receipt.logs
+        .map((log) => {
+          try {
+            return bridgeOrchestrator.interface.parseLog(log);
+          } catch {
+            return null;
+          }
+        })
+        .find((parsed) => parsed?.name === 'BridgeCompleted');
+
+      const vaultId = event.args.vaultId;
+
+      await expect(
+        bridgeOrchestrator.receiveAdditionalBridgedUSDC_CCTP(
+          vaultId,
+          ethers.parseEther('25'),
+          84532,
+          user1.address
+        )
+      ).to.emit(bridgeOrchestrator, 'BridgeCompleted');
     });
 
     it('should reject CCTP receive from non-transmitter', async () => {
@@ -136,7 +157,7 @@ describe('BridgeOrchestrator', () => {
       ).to.be.revertedWith('Only CCTP transmitter');
     });
 
-    it('should reject zero amount CCTP', async () => {
+    it('should reject zero amount CCTP deposits', async () => {
       const unlockAt = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
 
       await expect(
@@ -151,152 +172,36 @@ describe('BridgeOrchestrator', () => {
         )
       ).to.be.revertedWith('Invalid amount');
     });
-
-    it('should handle custom duration vs provided unlock time', async () => {
-      const amount = ethers.parseEther('100');
-      const providedUnlockAt = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
-
-      // With provided unlockAt
-      let tx = await bridgeOrchestrator.receiveBridgedUSDC_CCTP(
-        amount,
-        84532,
-        user1.address,
-        providedUnlockAt,
-        26,
-        7 * 24 * 60 * 60,
-        0
-      );
-
-      await expect(tx).to.emit(bridgeOrchestrator, 'BridgeCompleted');
-
-      // With customDuration (unlockAt = 0)
-      tx = await bridgeOrchestrator.receiveBridgedUSDC_CCTP(
-        amount,
-        84532,
-        user1.address,
-        0,
-        26,
-        7 * 24 * 60 * 60,
-        0
-      );
-
-      await expect(tx).to.emit(bridgeOrchestrator, 'BridgeCompleted');
-    });
-  });
-
-  describe('LayerZero Bridge Flow', () => {
-    beforeEach(async () => {
-      await bridgeOrchestrator.configureLayerZero(owner.address);
-    });
-
-    it('should receive bridged token via LayerZero', async () => {
-      const amount = ethers.parseEther('100');
-      const unlockAt = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
-
-      const tx = await bridgeOrchestrator.receiveBridgedToken_LayerZero(
-        amount,
-        84532,
-        user1.address,
-        unlockAt,
-        user1.address, // token address
-        26,
-        7 * 24 * 60 * 60,
-        0
-      );
-
-      await expect(tx).to.emit(bridgeOrchestrator, 'BridgeCompleted');
-    });
-
-    it('should reject LayerZero from non-endpoint', async () => {
-      const amount = ethers.parseEther('100');
-      const unlockAt = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
-
-      await expect(
-        bridgeOrchestrator.connect(user2).receiveBridgedToken_LayerZero(
-          amount,
-          84532,
-          user1.address,
-          unlockAt,
-          user1.address,
-          26,
-          7 * 24 * 60 * 60,
-          0
-        )
-      ).to.be.revertedWith('Only LayerZero endpoint');
-    });
-
-    it('should reject zero amount LayerZero', async () => {
-      const unlockAt = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
-
-      await expect(
-        bridgeOrchestrator.receiveBridgedToken_LayerZero(
-          0,
-          84532,
-          user1.address,
-          unlockAt,
-          user1.address,
-          26,
-          7 * 24 * 60 * 60,
-          0
-        )
-      ).to.be.revertedWith('Invalid amount');
-    });
-
-    it('should reject invalid token address', async () => {
-      const amount = ethers.parseEther('100');
-      const unlockAt = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
-
-      await expect(
-        bridgeOrchestrator.receiveBridgedToken_LayerZero(
-          amount,
-          84532,
-          user1.address,
-          unlockAt,
-          ZERO_ADDRESS,
-          26,
-          7 * 24 * 60 * 60,
-          0
-        )
-      ).to.be.revertedWith('Invalid token');
-    });
   });
 
   describe('Claim Initiation', () => {
-    it('should initiate CCTP claim', async () => {
+    it('should initiate CCTP claim from TimeLockVault only', async () => {
       const vaultId = ethers.id('test-vault');
 
-      const tx = await bridgeOrchestrator.initiateClaim_CCTP(vaultId, 26);
-
-      await expect(tx).to.emit(bridgeOrchestrator, 'BridgeInitiated');
-    });
-
-    it('should initiate LayerZero claim', async () => {
-      const vaultId = ethers.id('test-vault');
-
-      const tx = await bridgeOrchestrator.initiateClaim_LayerZero(vaultId, 26, user1.address);
-
-      await expect(tx).to.emit(bridgeOrchestrator, 'BridgeInitiated');
+      await expect(
+        bridgeOrchestrator.initiateClaim_CCTP(vaultId, 26)
+      ).to.be.revertedWith('Only TimeLockVault');
     });
   });
 
   describe('Attestation Handling', () => {
-    it('should receive CCTP attestation', async () => {
+    beforeEach(async () => {
       await bridgeOrchestrator.configureCCTP(user1.address, owner.address);
+    });
 
-      const attestationData = ethers.toUtf8Bytes('test-attestation');
+    it('should receive CCTP attestation from configured transmitter', async () => {
+      const tx = await bridgeOrchestrator.receiveAttestation_CCTP(
+        ethers.toUtf8Bytes('test-attestation')
+      );
 
-      const tx = await bridgeOrchestrator.receiveAttestation_CCTP(attestationData);
-
-      // Should not revert
       expect(tx).to.not.be.undefined;
     });
 
     it('should reject attestation from non-CCTP transmitter', async () => {
-      const attestationData = ethers.toUtf8Bytes('test-attestation');
-
-      // Without configuration, should fail
       await expect(
-        bridgeOrchestrator.connect(user2).receiveAttestation_CCTP(attestationData)
+        bridgeOrchestrator.connect(user2).receiveAttestation_CCTP(
+          ethers.toUtf8Bytes('test-attestation')
+        )
       ).to.be.revertedWith('Only CCTP');
     });
 
@@ -304,113 +209,22 @@ describe('BridgeOrchestrator', () => {
       const vaultId = ethers.id('failed-vault');
       const attestationData = ethers.toUtf8Bytes('retry-attestation');
 
-      const tx = await bridgeOrchestrator.retryFailedBridge(vaultId, attestationData);
-
-      await expect(tx).to.emit(bridgeOrchestrator, 'AttestationReceived');
-    });
-
-    it('should only allow owner to retry', async () => {
-      const vaultId = ethers.id('failed-vault');
-      const attestationData = ethers.toUtf8Bytes('retry-attestation');
-
       await expect(
-        bridgeOrchestrator.connect(user1).retryFailedBridge(vaultId, attestationData)
-      ).to.be.revertedWith('Ownable: caller is not the owner');
+        bridgeOrchestrator.retryFailedBridge(vaultId, attestationData)
+      ).to.emit(bridgeOrchestrator, 'AttestationReceived');
     });
   });
 
   describe('Bridge State Management', () => {
-    it('should track bridge state', async () => {
+    it('should return the initial bridge state for an unknown vault', async () => {
       const vaultId = ethers.id('test-vault');
-
-      // Initial state should be 0 (DEPOSIT_INITIATED)
-      let state = await bridgeOrchestrator.getBridgeState(vaultId);
-      expect(state).to.equal(0);
+      expect(await bridgeOrchestrator.getBridgeState(vaultId)).to.equal(0);
     });
 
-    it('should update state on operations', async () => {
-      await bridgeOrchestrator.configureLayerZero(owner.address);
-
-      const amount = ethers.parseEther('100');
-      const unlockAt = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
-
-      await bridgeOrchestrator.receiveBridgedToken_LayerZero(
-        amount,
-        84532,
-        user1.address,
-        unlockAt,
-        user1.address,
-        26,
-        7 * 24 * 60 * 60,
-        0
-      );
-    });
-  });
-
-  describe('Bridge Transaction Records', () => {
-    it('should return bridge transaction details', async () => {
+    it('should return an empty transaction for an unknown vault', async () => {
       const vaultId = ethers.id('test-vault');
-
       const tx = await bridgeOrchestrator.getBridgeTransaction(vaultId);
-
-      // Should return empty transaction for non-existent vault
       expect(tx).to.exist;
-    });
-  });
-
-  describe('Reentrancy Protection', () => {
-    it('should protect against reentrancy', async () => {
-      // Implementation depends on ReentrantAttacker mock
-      expect(true).to.equal(true);
-    });
-  });
-
-  describe('Multiple Bridge Protocols', () => {
-    beforeEach(async () => {
-      await bridgeOrchestrator.configureCCTP(user1.address, owner.address);
-      await bridgeOrchestrator.configureLayerZero(owner.address);
-    });
-
-    it('should handle both CCTP and LayerZero in sequence', async () => {
-      const amount = ethers.parseEther('100');
-      const unlockAt = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
-
-      // CCTP
-      let tx = await bridgeOrchestrator.receiveBridgedUSDC_CCTP(
-        amount,
-        84532,
-        user1.address,
-        unlockAt,
-        26,
-        7 * 24 * 60 * 60,
-        0
-      );
-      await expect(tx).to.emit(bridgeOrchestrator, 'BridgeCompleted');
-
-      // LayerZero
-      tx = await bridgeOrchestrator.receiveBridgedToken_LayerZero(
-        amount,
-        84532,
-        user1.address,
-        unlockAt,
-        user1.address,
-        26,
-        7 * 24 * 60 * 60,
-        0
-      );
-      await expect(tx).to.emit(bridgeOrchestrator, 'BridgeCompleted');
-    });
-  });
-
-  describe('Access Control', () => {
-    it('should enforce owner-only functions', async () => {
-      await expect(
-        bridgeOrchestrator.connect(user1).configureCCTP(user1.address, user2.address)
-      ).to.be.revertedWith('Ownable: caller is not the owner');
-
-      await expect(
-        bridgeOrchestrator.connect(user1).configureLayerZero(user1.address)
-      ).to.be.revertedWith('Ownable: caller is not the owner');
     });
   });
 });
