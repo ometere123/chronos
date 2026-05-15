@@ -1,0 +1,44 @@
+{
+  "type": "module",
+  "name": "chronos-contracts",
+  "version": "1.0.0",
+  "description": "CHRONOS Smart Contracts - Multi-Token Time-Locked Vaults",
+  "main": "index.js",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:arc": "hardhat run --no-compile scripts/deploy-arc.js --network arcTestnet",
+    "deploy:base": "hardhat run --no-compile scripts/deploy-receivers.js --network baseSepoliaTestnet",
+    "deploy:arbitrum": "hardhat run --no-compile scripts/deploy-receivers.js --network arbitrumSepoliaTestnet",
+    "deploy:ethereum": "hardhat run --no-compile scripts/deploy-receivers.js --network ethereumSepoliaTestnet",
+    "deploy:op": "hardhat run --no-compile scripts/deploy-receivers.js --network opSepoliaTestnet",
+    "verify:arc": "hardhat verify --network arcTestnet",
+    "flatten": "hardhat flatten",
+    "gas-report": "REPORT_GAS=true hardhat test",
+    "lint": "solhint arc/**/*.sol",
+    "format": "prettier --write arc/**/*.sol",
+    "clean": "hardhat clean",
+    "typechain": "hardhat typechain"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox-viem": "^5.0.5",
+    "@nomicfoundation/hardhat-verify": "^3.0.17",
+    "@typechain/ethers-v6": "^0.5.0",
+    "chai": "^4.3.10",
+    "ethers": "^6.7.0",
+    "hardhat": "^3.4.5",
+    "prettier": "^3.0.0",
+    "prettier-plugin-solidity": "^1.2.0",
+    "solhint": "^6.2.1",
+    "typechain": "^8.3.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^4.9.3",
+    "@openzeppelin/contracts-upgradeable": "^4.9.3",
+    "dotenv": "^16.3.1"
+  },
+  "overrides": {
+    "undici": "^6.23.1",
+    "lodash-es": "^4.17.24"
+  }
+}
