@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { SparklesIcon } from './Icons';
 
 interface CountdownTimerProps {
   unlockAt: number;
@@ -64,8 +65,9 @@ export default function CountdownTimer({ unlockAt, vaultId }: CountdownTimerProp
 
   if (isMature) {
     return (
-      <div className="text-yellow-400 font-mono text-sm font-bold">
-        🎉 Vault is Mature!
+      <div className="inline-flex items-center gap-1.5 text-yellow-400 font-mono text-sm font-bold">
+        <SparklesIcon className="h-4 w-4" />
+        Vault is Mature!
       </div>
     );
   }

@@ -4,6 +4,15 @@ import { useRouter } from 'next/navigation';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import { useInjectedWallet } from '@/hooks/useInjectedWallet';
+import {
+  BridgeIcon,
+  ChartIcon,
+  CheckIcon,
+  ClockIcon,
+  LockIcon,
+  PlusIcon,
+  ShieldIcon,
+} from '@/components/ui/Icons';
 
 export default function Home() {
   const { isConnected, connect } = useInjectedWallet();
@@ -26,8 +35,9 @@ export default function Home() {
         <section className="px-4 pt-20 pb-16 sm:pt-32 sm:pb-24">
           <div className="max-w-4xl mx-auto text-center">
             <div className="mb-8">
-              <span className="inline-block px-4 py-2 bg-primary/10 border border-primary/20 rounded-full text-primary text-sm font-medium">
-                🔐 Testnet Release
+              <span className="inline-flex items-center px-4 py-2 bg-primary/10 border border-primary/20 rounded-full text-primary text-sm font-medium">
+                <LockIcon className="mr-2 h-4 w-4" />
+                Testnet Release
               </span>
             </div>
 
@@ -83,7 +93,7 @@ export default function Home() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
               {/* Feature 1 */}
               <div className="card">
-                <div className="text-4xl mb-4">🔒</div>
+                <LockIcon className="h-10 w-10 mb-4 text-primary" />
                 <h3 className="text-xl font-bold text-light mb-3">Non-Custodial</h3>
                 <p className="text-light/70">
                   You control your keys. We never hold your tokens. All settlement on Arc Testnet.
@@ -92,7 +102,7 @@ export default function Home() {
 
               {/* Feature 2 */}
               <div className="card">
-                <div className="text-4xl mb-4">⏰</div>
+                <ClockIcon className="h-10 w-10 mb-4 text-primary" />
                 <h3 className="text-xl font-bold text-light mb-3">FIXED Vaults</h3>
                 <p className="text-light/70">
                   Immutable unlock dates. Zero early withdrawal. Maximum discipline. 0% penalty.
@@ -101,7 +111,7 @@ export default function Home() {
 
               {/* Feature 3 */}
               <div className="card">
-                <div className="text-4xl mb-4">🛡️</div>
+                <ShieldIcon className="h-10 w-10 mb-4 text-primary" />
                 <h3 className="text-xl font-bold text-light mb-3">FLEXIBLE Vaults</h3>
                 <p className="text-light/70">
                   Emergency withdrawals anytime. 0.5% penalty if before unlock. 0% at maturity.
@@ -110,7 +120,7 @@ export default function Home() {
 
               {/* Feature 4 */}
               <div className="card">
-                <div className="text-4xl mb-4">🌉</div>
+                <BridgeIcon className="h-10 w-10 mb-4 text-primary" />
                 <h3 className="text-xl font-bold text-light mb-3">Multi-Chain</h3>
                 <p className="text-light/70">
                   Deposit from Base, Arbitrum, or Ethereum. Settle on Arc. Claim back on source.
@@ -119,7 +129,7 @@ export default function Home() {
 
               {/* Feature 5 */}
               <div className="card">
-                <div className="text-4xl mb-4">📊</div>
+                <ChartIcon className="h-10 w-10 mb-4 text-primary" />
                 <h3 className="text-xl font-bold text-light mb-3">Proof of Reserves</h3>
                 <p className="text-light/70">
                   Real-time transparency. Auditable on-chain. Smart contract verified.
@@ -128,7 +138,7 @@ export default function Home() {
 
               {/* Feature 6 */}
               <div className="card">
-                <div className="text-4xl mb-4">➕</div>
+                <PlusIcon className="h-10 w-10 mb-4 text-primary" />
                 <h3 className="text-xl font-bold text-light mb-3">Add to Vault</h3>
                 <p className="text-light/70">
                   Extend with new deposits. Same unlock date. Keep growing your discipline.
@@ -201,27 +211,27 @@ export default function Home() {
             <h2 className="text-3xl font-bold text-light mb-12">Built for Trust</h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-8 text-center">
               <div>
-                <div className="text-4xl mb-3">✅</div>
+                <CheckIcon className="mx-auto h-10 w-10 mb-3 text-primary" />
                 <div className="text-light/70 text-sm">Non-Custodial</div>
               </div>
               <div>
-                <div className="text-4xl mb-3">✅</div>
+                <CheckIcon className="mx-auto h-10 w-10 mb-3 text-primary" />
                 <div className="text-light/70 text-sm">Auditable</div>
               </div>
               <div>
-                <div className="text-4xl mb-3">✅</div>
+                <CheckIcon className="mx-auto h-10 w-10 mb-3 text-primary" />
                 <div className="text-light/70 text-sm">Open-Source</div>
               </div>
               <div>
-                <div className="text-4xl mb-3">✅</div>
+                <CheckIcon className="mx-auto h-10 w-10 mb-3 text-primary" />
                 <div className="text-light/70 text-sm">Smart Contract Verified</div>
               </div>
               <div>
-                <div className="text-4xl mb-3">✅</div>
+                <CheckIcon className="mx-auto h-10 w-10 mb-3 text-primary" />
                 <div className="text-light/70 text-sm">Zero Fees (Testnet)</div>
               </div>
               <div>
-                <div className="text-4xl mb-3">✅</div>
+                <CheckIcon className="mx-auto h-10 w-10 mb-3 text-primary" />
                 <div className="text-light/70 text-sm">Real-Time Stats</div>
               </div>
             </div>

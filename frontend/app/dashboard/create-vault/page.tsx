@@ -25,6 +25,15 @@ import {
   waitForWalletChain,
   waitForTransactionReceipt,
 } from '@/lib/evm';
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  CheckIcon,
+  ClockIcon,
+  LoaderIcon,
+  ShieldIcon,
+  SparklesIcon,
+} from '@/components/ui/Icons';
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
@@ -667,7 +676,10 @@ export default function CreateVaultPage() {
                   className="w-5 h-5 mt-1"
                 />
                 <div className="ml-4">
-                  <div className="text-lg font-bold text-primary">⏰ FIXED Vault</div>
+                  <div className="inline-flex items-center gap-2 text-lg font-bold text-primary">
+                    <ClockIcon className="h-5 w-5" />
+                    FIXED Vault
+                  </div>
                   <div className="text-light/70 mt-2">
                     Immutable unlock date. No early withdrawals. Zero penalty. Maximum discipline.
                   </div>
@@ -685,7 +697,10 @@ export default function CreateVaultPage() {
                   className="w-5 h-5 mt-1"
                 />
                 <div className="ml-4">
-                  <div className="text-lg font-bold text-accent">🛡️ FLEXIBLE Vault</div>
+                  <div className="inline-flex items-center gap-2 text-lg font-bold text-accent">
+                    <ShieldIcon className="h-5 w-5" />
+                    FLEXIBLE Vault
+                  </div>
                   <div className="text-light/70 mt-2">
                     Withdraw anytime. 0.5% penalty if before unlock. 0% penalty at unlock.
                   </div>
@@ -722,7 +737,19 @@ export default function CreateVaultPage() {
 
               <div className="flex justify-between items-center py-3 border-b border-primary/10">
                 <div className="text-light/60">Vault Type</div>
-                <div className="font-semibold">{formData.vaultType === 'FIXED' ? '⏰ FIXED' : '🛡️ FLEXIBLE'}</div>
+                <div className="font-semibold">
+                  {formData.vaultType === 'FIXED' ? (
+                    <span className="inline-flex items-center gap-2">
+                      <ClockIcon className="h-4 w-4" />
+                      FIXED
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-2">
+                      <ShieldIcon className="h-4 w-4" />
+                      FLEXIBLE
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="flex justify-between items-center py-3 border-b border-primary/10">
@@ -759,7 +786,10 @@ export default function CreateVaultPage() {
             </p>
 
             <div className="bg-primary/10 border border-primary/30 rounded-lg p-4 mb-6">
-              <div className="text-primary font-semibold">✅ Ready to create vault</div>
+              <div className="inline-flex items-center gap-2 text-primary font-semibold">
+                <CheckIcon className="h-4 w-4" />
+                Ready to create vault
+              </div>
               <div className="text-light/70 text-sm mt-2">All details confirmed. No changes allowed after creation.</div>
             </div>
 
@@ -797,7 +827,10 @@ export default function CreateVaultPage() {
             disabled={currentStep === 1}
             className="px-6 py-3 border border-primary text-primary rounded-lg hover:bg-primary/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            ← Back
+            <span className="inline-flex items-center gap-2">
+              <ArrowLeftIcon className="h-4 w-4" />
+              Back
+            </span>
           </button>
 
           {currentStep < 5 ? (
@@ -806,7 +839,10 @@ export default function CreateVaultPage() {
               onClick={handleNext}
               className="px-6 py-3 bg-primary text-dark font-bold rounded-lg hover:bg-primary/90 transition-colors"
             >
-              Next →
+              <span className="inline-flex items-center gap-2">
+                Next
+                <ArrowRightIcon className="h-4 w-4" />
+              </span>
             </button>
           ) : (
             <button
@@ -814,7 +850,17 @@ export default function CreateVaultPage() {
               disabled={mutation.isPending}
               className="px-8 py-3 bg-green-500 text-dark font-bold rounded-lg hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {mutation.isPending ? '⏳ Creating...' : '🎉 Create Vault'}
+              {mutation.isPending ? (
+                <span className="inline-flex items-center gap-2">
+                  <LoaderIcon className="h-4 w-4 animate-spin" />
+                  Creating...
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-2">
+                  <SparklesIcon className="h-4 w-4" />
+                  Create Vault
+                </span>
+              )}
             </button>
           )}
         </div>

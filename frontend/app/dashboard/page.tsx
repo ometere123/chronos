@@ -7,6 +7,7 @@ import VaultCard from '@/components/ui/VaultCard';
 import { Vault } from '@/types';
 import { useState } from 'react';
 import { useInjectedWallet } from '@/hooks/useInjectedWallet';
+import { PlusIcon } from '@/components/ui/Icons';
 
 export default function DashboardPage() {
   const { address } = useInjectedWallet();
@@ -42,9 +43,10 @@ export default function DashboardPage() {
         </div>
         <Link
           href="/dashboard/create-vault"
-          className="px-6 py-3 bg-primary text-dark font-bold rounded-lg hover:bg-primary/90 transition-colors"
+          className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-dark font-bold rounded-lg hover:bg-primary/90 transition-colors"
         >
-          ➕ Create Vault
+          <PlusIcon className="h-5 w-5" />
+          Create Vault
         </Link>
       </div>
 
