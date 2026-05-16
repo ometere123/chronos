@@ -16,6 +16,20 @@ import { bridgeTrackerService } from './services/bridgeTrackerService.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const DEV_ORIGINS = ['http://localhost:3000', 'http://localhost:3001'];
+
+function getAllowedOrigins() {
+  const configuredOrigins = (process.env.FRONTEND_URL || process.env.FRONTEND_ORIGINS || '')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
+
+  if (configuredOrigins.length > 0) {
+    return configuredOrigins;
+  }
+
+  return process.env.NODE_ENV === 'production' ? [] : DEV_ORIGINS;
+}
 
 process.on('unhandledRejection', (reason) => {
   logger.error('Unhandled promise rejection', {
@@ -34,9 +48,7 @@ process.on('uncaughtException', (err) => {
 // Security middleware
 app.use(helmet());
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
-    ? ['https://chronos.vercel.app']
-    : ['http://localhost:3000', 'http://localhost:3001'],
+  origin: getAllowedOrigins(),
   credentials: true
 }));
 
