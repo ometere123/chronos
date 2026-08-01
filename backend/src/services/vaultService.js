@@ -30,6 +30,104 @@ export const vaultService = {
     }
   },
 
+  // Create a new "smart" split vault (savings/yield/reserve sub-balances on one vault record)
+  async createSplitVault(
+    vaultId,
+    owner,
+    totalAmount,
+    createdAt,
+    unlockAt,
+    sourceChain,
+    destinationChain,
+    bridgeProtocol,
+    tokenAddress,
+    vaultType,
+    splitConfig,
+    createdOnChainTx = null
+  ) {
+    const { savingsBps, yieldBps, reserveBps } = splitConfig || {};
+    if ((savingsBps || 0) + (yieldBps || 0) + (reserveBps || 0) !== 10000) {
+      throw new Error('Split bps must sum to 10000');
+    }
+
+    try {
+      const result = await pool.query(
+        `INSERT INTO vaults (
+           vault_id, owner_address, total_amount, created_at, unlock_at, source_chain,
+           destination_chain, bridge_protocol, token_address, vault_type, status,
+           created_on_chain_tx, is_split, savings_bps, yield_bps, reserve_bps
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, TRUE, $13, $14, $15)
+         RETURNING *`,
+        [
+          vaultId, owner, totalAmount, createdAt, unlockAt, sourceChain, destinationChain,
+          bridgeProtocol, tokenAddress, vaultType, 'ACTIVE', createdOnChainTx,
+          savingsBps, yieldBps, reserveBps,
+        ]
+      );
+      return result.rows[0];
+    } catch (err) {
+      logger.error('Error creating split vault', { error: err.message, vaultId });
+      throw err;
+    }
+  },
+
+  // Mark one bucket (savings|yield|reserve) of a split vault as claimed
+  async markBucketClaimed(vaultId, bucket) {
+    const columnByBucket = {
+      savings: 'savings_claimed',
+      yield: 'yield_claimed',
+      reserve: 'reserve_claimed',
+    };
+    const column = columnByBucket[bucket];
+    if (!column) {
+      throw new Error(`Invalid bucket: ${bucket}`);
+    }
+
+    try {
+      const result = await pool.query(
+        `UPDATE vaults SET ${column} = TRUE WHERE vault_id = $1 RETURNING *`,
+        [vaultId]
+      );
+      const vault = result.rows[0];
+
+      if (vault && vault.savings_claimed && vault.yield_claimed && vault.reserve_claimed) {
+        await pool.query(
+          `UPDATE vaults SET status = 'CLAIMED', claimed_at = COALESCE(claimed_at, NOW()) WHERE vault_id = $1`,
+          [vaultId]
+        );
+      }
+
+      return vault;
+    } catch (err) {
+      logger.error('Error marking bucket claimed', { error: err.message, vaultId, bucket });
+      throw err;
+    }
+  },
+
+  // Get split config + bucket amounts/claim status for a vault
+  getSplitAllocation(vault, usdcDecimalsAmount = null) {
+    if (!vault || !vault.is_split) {
+      return null;
+    }
+
+    const total = usdcDecimalsAmount !== null ? usdcDecimalsAmount : parseFloat(vault.total_amount);
+    const savingsAmount = (total * vault.savings_bps) / 10000;
+    const yieldAmount = (total * vault.yield_bps) / 10000;
+    const reserveAmount = total - savingsAmount - yieldAmount;
+
+    return {
+      savingsBps: vault.savings_bps,
+      yieldBps: vault.yield_bps,
+      reserveBps: vault.reserve_bps,
+      buckets: {
+        savings: { amount: savingsAmount, claimed: vault.savings_claimed },
+        yield: { amount: yieldAmount, claimed: vault.yield_claimed },
+        reserve: { amount: reserveAmount, claimed: vault.reserve_claimed },
+      },
+    };
+  },
+
   // Get vault by ID
   async getVault(vaultId) {
     try {
