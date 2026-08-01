@@ -1,9 +1,10 @@
 import { expect } from 'chai';
 import { describe, it, beforeEach } from 'node:test';
 import hre from 'hardhat';
-import { time } from '@nomicfoundation/hardhat-network-helpers';
 
-const { ethers } = hre;
+const connection = await hre.network.connect();
+const { ethers } = connection;
+const { time } = connection.networkHelpers;
 
 describe('Contract Integration Tests', () => {
   let timeLockVault;
@@ -24,7 +25,7 @@ describe('Contract Integration Tests', () => {
     mockToken = await MockERC20.deploy('USDC', 'USDC', ethers.parseEther('1000000'));
 
     const Treasury = await ethers.getContractFactory('Treasury');
-    treasury = await Treasury.deploy([user1.address, user2.address, owner.address], 2);
+    treasury = await Treasury.deploy(mockToken.address, [user1.address, user2.address, owner.address], 2);
 
     const TimeLockVault = await ethers.getContractFactory('TimeLockVault');
     timeLockVault = await TimeLockVault.deploy(await treasury.getAddress());

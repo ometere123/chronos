@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { describe, it, beforeEach } from 'node:test';
 import hre from "hardhat";
-const { ethers } = hre;
+const { ethers } = await hre.network.connect();
 
 
 
@@ -22,7 +22,7 @@ describe('ProofOfReserves', () => {
 
     // Deploy Treasury
     const Treasury = await ethers.getContractFactory('Treasury');
-    treasury = await Treasury.deploy([user1.address, user2.address, owner.address], 2);
+    treasury = await Treasury.deploy(mockToken.address, [user1.address, user2.address, owner.address], 2);
 
     // Deploy TimeLockVault
     const TimeLockVault = await ethers.getContractFactory('TimeLockVault');

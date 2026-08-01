@@ -3,9 +3,10 @@ pragma solidity 0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title Treasury
-/// @notice Collects and manages protocol fees with multisig-controlled withdrawals
+/// @notice Collects and manages protocol fees (in USDC) with multisig-controlled withdrawals
 contract Treasury is Ownable, ReentrancyGuard {
     event FeeDeposited(uint256 amount, address indexed feeCollector);
     event FeeWithdrawn(uint256 amount, address indexed recipient);
@@ -13,15 +14,19 @@ contract Treasury is Ownable, ReentrancyGuard {
     event SignerAdded(address indexed newSigner);
     event SignerRemoved(address indexed signer);
 
+    IERC20 public immutable usdc;
     uint256 public accumulatedFees;
     address[] public multisigSigners;
     uint256 public multisigThreshold;
 
     mapping(address => bool) public isMultisigSigner;
 
-    constructor(address[] memory initialSigners, uint256 threshold) {
+    constructor(address usdcAddress, address[] memory initialSigners, uint256 threshold) {
+        require(usdcAddress != address(0), "Invalid USDC address");
         require(initialSigners.length >= 3, "At least 3 signers required");
         require(threshold > 0 && threshold <= initialSigners.length, "Invalid threshold");
+
+        usdc = IERC20(usdcAddress);
 
         for (uint256 i = 0; i < initialSigners.length; i++) {
             require(initialSigners[i] != address(0), "Invalid signer");
@@ -31,32 +36,37 @@ contract Treasury is Ownable, ReentrancyGuard {
         multisigThreshold = threshold;
     }
 
-    /// @notice Deposit fee to treasury
+    /// @notice Deposit fee to treasury. Caller must approve this contract for `amount` USDC first.
     /// @param amount Amount to deposit
     function depositFee(uint256 amount) external onlyOwner {
         require(amount > 0, "Amount must be > 0");
         accumulatedFees += amount;
+        require(usdc.transferFrom(msg.sender, address(this), amount), "USDC transferFrom failed");
         emit FeeDeposited(amount, msg.sender);
     }
 
     /// @notice Withdraw fee (multisig protected in production)
     /// @param amount Amount to withdraw
     /// @param destinationAddress Recipient address
-    function withdrawFee(uint256 amount, address payable destinationAddress) external onlyOwner nonReentrant {
+    function withdrawFee(uint256 amount, address destinationAddress) external onlyOwner nonReentrant {
         require(amount > 0, "Amount must be > 0");
         require(amount <= accumulatedFees, "Insufficient fees");
         require(destinationAddress != address(0), "Invalid recipient");
 
         accumulatedFees -= amount;
-        (bool success, ) = destinationAddress.call{value: amount}("");
-        require(success, "Withdrawal failed");
+        require(usdc.transfer(destinationAddress, amount), "USDC transfer failed");
 
         emit FeeWithdrawn(amount, destinationAddress);
     }
 
-    /// @notice Get current fee balance
+    /// @notice Get current fee balance (accounting balance)
     function getBalance() external view returns (uint256) {
         return accumulatedFees;
+    }
+
+    /// @notice Get actual on-chain USDC balance held by this contract
+    function getUsdcBalance() external view returns (uint256) {
+        return usdc.balanceOf(address(this));
     }
 
     /// @notice Get number of multisig signers
@@ -95,9 +105,5 @@ contract Treasury is Ownable, ReentrancyGuard {
         require(newThreshold > 0 && newThreshold <= multisigSigners.length, "Invalid threshold");
         multisigThreshold = newThreshold;
         emit MultisigThresholdUpdated(newThreshold);
-    }
-
-    receive() external payable {
-        accumulatedFees += msg.value;
     }
 }

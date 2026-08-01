@@ -2,7 +2,7 @@ import { expect } from 'chai';
 import { describe, it, beforeEach } from 'node:test';
 import hre from 'hardhat';
 
-const { ethers } = hre;
+const { ethers } = await hre.network.connect();
 
 describe('BridgeOrchestrator', () => {
   let bridgeOrchestrator;
@@ -21,7 +21,7 @@ describe('BridgeOrchestrator', () => {
     mockToken = await MockERC20.deploy('USDC', 'USDC', ethers.parseEther('1000000'));
 
     const Treasury = await ethers.getContractFactory('Treasury');
-    const treasury = await Treasury.deploy([user1.address, user2.address, owner.address], 2);
+    const treasury = await Treasury.deploy(mockToken.address, [user1.address, user2.address, owner.address], 2);
 
     const TimeLockVault = await ethers.getContractFactory('TimeLockVault');
     timeLockVault = await TimeLockVault.deploy(await treasury.getAddress());

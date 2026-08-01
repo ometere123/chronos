@@ -16,7 +16,12 @@ async function main() {
   console.log("Deployer address:", deployerAddress);
 
   console.log("\n1. Deploying Treasury...");
+  const usdcAddress = process.env.ARC_USDC;
+  if (!usdcAddress) {
+    throw new Error("ARC_USDC env var not set");
+  }
   const treasury = await viem.deployContract("Treasury", [
+    usdcAddress,
     [deployerAddress, "0x0000000000000000000000000000000000000001", "0x0000000000000000000000000000000000000002"],
     2n,
   ]);

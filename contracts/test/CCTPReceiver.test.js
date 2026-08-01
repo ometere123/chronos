@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { describe, it, beforeEach } from 'node:test';
 import hre from "hardhat";
-const { ethers } = hre;
+const { ethers } = await hre.network.connect();
 
 
 

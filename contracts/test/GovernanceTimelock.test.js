@@ -1,10 +1,9 @@
 import { expect } from 'chai';
 import { describe, it, beforeEach } from 'node:test';
 import hre from "hardhat";
-const { ethers } = hre;
-
-
-import { time } from '@nomicfoundation/hardhat-network-helpers';
+const connection = await hre.network.connect();
+const { ethers } = connection;
+const { time } = connection.networkHelpers;
 
 describe('GovernanceTimelock', () => {
   let timelock;
