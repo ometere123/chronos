@@ -73,6 +73,12 @@ router.post('/email-otp', asyncHandler(async (req, res) => {
 // Step 3: after the user completes Circle's hosted OTP-verification UI (which yields a fresh
 // userToken), request wallet creation (SCA, Arc Testnet) alongside PIN setup. Circle's Web SDK
 // then renders the hosted PIN-creation UI to complete the challenge this call initiates.
+//
+// Circle's user identity is keyed by email (not our own developer-assigned userId), so re-running
+// this flow against the same email - e.g. during testing - hits "The user had already been
+// initialized" once a PIN/wallet exists from an earlier attempt. That's not a real failure: the
+// user already has a wallet. Detect it and tell the frontend to skip straight to session
+// issuance instead of erroring.
 router.post('/create-wallet', asyncHandler(async (req, res) => {
   const { userToken } = req.body;
   if (!userToken) {
@@ -83,6 +89,16 @@ router.post('/create-wallet', asyncHandler(async (req, res) => {
     const result = await createUserWallet({ userToken });
     res.json(result);
   } catch (err) {
+    const rawData = err.response?.data;
+    const detail =
+      (typeof rawData === 'string' ? rawData : rawData?.message || rawData?.error?.message) ||
+      err.message ||
+      '';
+    if (/already.*initialized/i.test(detail)) {
+      logger.info('User already initialized - existing wallet, skipping PIN challenge', { detail });
+      return res.json({ alreadyInitialized: true });
+    }
+
     logger.error('Error creating user wallet', { error: err.message });
     res.status(502).json({ error: { message: 'Failed to create wallet', detail: err.response?.data || err.message } });
   }

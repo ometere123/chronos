@@ -44,6 +44,20 @@ export function useEmailWallet() {
   /// constructing a new W3SSdk here instead of calling setAuthentication() on the existing one
   /// caused "Invalid credentials" during execute(), confirmed live), sets the fresh auth on it,
   /// requests wallet creation (SCA, Arc Testnet), then runs Circle's hosted PIN-creation UI.
+  const finishSession = useCallback(async (userToken: string) => {
+    const { data: session } = await apiClient.post('/user-wallet/session', {
+      userToken,
+      userId: userIdRef.current,
+    });
+
+    localStorage.setItem(TOKEN_KEY, session.token);
+    localStorage.setItem(ADDRESS_KEY, session.address.toLowerCase());
+    setToken(session.token);
+    setIsConnected(true);
+    setAddress(session.address);
+    setStep('done');
+  }, [setToken, setIsConnected]);
+
   const createWallet = useCallback(async (userToken: string, encryptionKey: string) => {
     setError(null);
     setIsLoading(true);
@@ -59,6 +73,13 @@ export function useEmailWallet() {
       const { data: challenge } = await apiClient.post('/user-wallet/create-wallet', { userToken });
       console.log('[CHRONOS email wallet] got challenge', challenge);
 
+      // Re-running signup against an email that already has a Circle wallet (e.g. from an
+      // earlier attempt) skips the PIN challenge entirely - the wallet already exists.
+      if (challenge.alreadyInitialized) {
+        await finishSession(userToken);
+        return;
+      }
+
       setStep('awaiting-pin');
       sdk.execute(challenge.challengeId, async (err) => {
         console.log('[CHRONOS email wallet] execute() completed', { err });
@@ -66,18 +87,7 @@ export function useEmailWallet() {
           setError(err.message || JSON.stringify(err) || 'Wallet creation failed');
           return;
         }
-
-        const { data: session } = await apiClient.post('/user-wallet/session', {
-          userToken,
-          userId: userIdRef.current,
-        });
-
-        localStorage.setItem(TOKEN_KEY, session.token);
-        localStorage.setItem(ADDRESS_KEY, session.address.toLowerCase());
-        setToken(session.token);
-        setIsConnected(true);
-        setAddress(session.address);
-        setStep('done');
+        await finishSession(userToken);
       });
     } catch (err: any) {
       console.error('[CHRONOS email wallet] createWallet failed', err);
@@ -91,7 +101,7 @@ export function useEmailWallet() {
     } finally {
       setIsLoading(false);
     }
-  }, [appId, setIsLoading, setToken, setIsConnected]);
+  }, [setIsLoading, finishSession]);
 
   /// Step 1: user submits their email. Pre-creates a Circle user (our own userId), initializes
   /// the SDK with an onLoginComplete callback that proceeds to wallet creation once the OTP
