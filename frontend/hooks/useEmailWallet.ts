@@ -133,8 +133,11 @@ export function useEmailWallet() {
       });
       sdkRef.current = sdk;
 
+      console.log('[CHRONOS email wallet] requesting device id');
       const deviceId = await sdk.getDeviceId();
+      console.log('[CHRONOS email wallet] got device id', deviceId);
       const { data: otpData } = await apiClient.post('/user-wallet/email-otp', { deviceId, email });
+      console.log('[CHRONOS email wallet] got otp challenge data', otpData);
 
       sdk.updateConfigs({
         appSettings: { appId },
@@ -148,7 +151,13 @@ export function useEmailWallet() {
       setStep('awaiting-otp');
       sdk.verifyOtp(); // renders Circle's hosted OTP-entry modal
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || err.message || 'Failed to start signup');
+      console.error('[CHRONOS email wallet] startEmailSignup failed', err);
+      setError(
+        err?.response?.data?.error?.message ||
+        err?.message ||
+        JSON.stringify(err) ||
+        'Failed to start signup'
+      );
     } finally {
       setIsLoading(false);
     }
