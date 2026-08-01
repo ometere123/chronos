@@ -40,14 +40,19 @@ export function useEmailWallet() {
   const configured = Boolean(appId);
 
   /// Step 2: once the OTP modal completes, the SDK calls this with a fresh userToken/
-  /// encryptionKey. Re-initializes the SDK with that fresh auth, requests wallet creation
-  /// (SCA, Arc Testnet), then runs Circle's hosted PIN-creation UI to complete it.
+  /// encryptionKey. Reuses the SAME sdk instance from step 1 (per Circle's docs pattern -
+  /// constructing a new W3SSdk here instead of calling setAuthentication() on the existing one
+  /// caused "Invalid credentials" during execute(), confirmed live), sets the fresh auth on it,
+  /// requests wallet creation (SCA, Arc Testnet), then runs Circle's hosted PIN-creation UI.
   const createWallet = useCallback(async (userToken: string, encryptionKey: string) => {
     setError(null);
     setIsLoading(true);
     try {
-      const sdk = new W3SSdk({ appSettings: { appId: appId! }, authentication: { userToken, encryptionKey } });
-      sdkRef.current = sdk;
+      const sdk = sdkRef.current;
+      if (!sdk) {
+        throw new Error('SDK session lost - please restart sign-up');
+      }
+      sdk.setAuthentication({ userToken, encryptionKey });
 
       const { data: challenge } = await apiClient.post('/user-wallet/create-wallet', { userToken });
 
@@ -77,9 +82,12 @@ export function useEmailWallet() {
     }
   }, [appId, setIsLoading, setToken, setIsConnected]);
 
-  /// Step 1: user submits their email. Creates a Circle user + token, initializes the SDK with
-  /// an onLoginComplete callback that automatically proceeds to wallet creation once the OTP
-  /// modal succeeds, then requests the OTP email and opens Circle's hosted OTP-entry UI.
+  /// Step 1: user submits their email. Pre-creates a Circle user (our own userId), initializes
+  /// the SDK with an onLoginComplete callback that proceeds to wallet creation once the OTP
+  /// modal succeeds, requests the OTP email, then configures the SDK's loginConfigs with the
+  /// deviceToken/deviceEncryptionKey/otpToken the OTP request returned - NOT a userToken. The
+  /// SDK's verifyOtp() step authenticates via those login-config tokens, not the general-purpose
+  /// userToken (which only becomes valid/relevant after OTP verification succeeds).
   const startEmailSignup = useCallback(async (email: string) => {
     setError(null);
     setIsLoading(true);
@@ -91,23 +99,29 @@ export function useEmailWallet() {
       const userId = crypto.randomUUID();
       userIdRef.current = userId;
 
-      const { data: tokenData } = await apiClient.post('/user-wallet/signup', { userId });
+      await apiClient.post('/user-wallet/signup', { userId });
 
-      const sdk = new W3SSdk(
-        { appSettings: { appId }, authentication: { userToken: tokenData.userToken, encryptionKey: tokenData.encryptionKey } },
-        (loginErr, result) => {
-          if (loginErr || !result) {
-            setError(loginErr?.message || 'Email verification failed');
-            return;
-          }
-          const emailResult = result as EmailLoginResult;
-          void createWallet(emailResult.userToken, emailResult.encryptionKey);
+      const sdk = new W3SSdk({ appSettings: { appId } }, (loginErr, result) => {
+        if (loginErr || !result) {
+          setError(loginErr?.message || 'Email verification failed');
+          return;
         }
-      );
+        const emailResult = result as EmailLoginResult;
+        void createWallet(emailResult.userToken, emailResult.encryptionKey);
+      });
       sdkRef.current = sdk;
 
       const deviceId = await sdk.getDeviceId();
-      await apiClient.post('/user-wallet/email-otp', { deviceId, email });
+      const { data: otpData } = await apiClient.post('/user-wallet/email-otp', { deviceId, email });
+
+      sdk.updateConfigs({
+        appSettings: { appId },
+        loginConfigs: {
+          deviceToken: otpData.deviceToken,
+          deviceEncryptionKey: otpData.deviceEncryptionKey,
+          otpToken: otpData.otpToken,
+        },
+      });
 
       setStep('awaiting-otp');
       sdk.verifyOtp(); // renders Circle's hosted OTP-entry modal

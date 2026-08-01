@@ -1,13 +1,22 @@
-// Circle User-Controlled Wallets: email OTP onboarding + PIN-secured smart contract account
-// (SCA) on Arc Testnet. This is the "sign up with just an email" path, alongside (not
-// replacing) the existing injected-wallet flow in useInjectedWallet.ts.
+// Circle User-Controlled Wallets: email OTP for LOGIN, on a smart contract account (SCA) on Arc
+// Testnet. This is the "sign up with just an email" path, alongside (not replacing) the existing
+// injected-wallet flow in useInjectedWallet.ts.
 //
-// Key custody here is Circle's 2-of-2 MPC (Circle + the authenticated user) - there is no
-// exportable private key, so this is NOT bridged into the ERC-4337/Pimlico smart-account setup
-// built for the agent (agentSmartAccountService.js). Instead, users get Circle's own SCA wallet
-// type, gas-sponsored via Circle's Gas Station (confirmed to support Arc Testnet) rather than
-// Pimlico - two separate, real sponsorship mechanisms for two separate identities (the agent's
-// smart account vs. a human user's Circle wallet), not one shared system.
+// Important, confirmed limitation: Circle's current SDK always requires a PIN + security
+// questions to authorize wallet CREATION/SIGNING, even when login itself uses email OTP.
+// Email OTP replaces how you log in; it does not replace how you authorize a wallet action -
+// that's PIN-based in every case today, per Circle's own "Build a Wallet App" tutorial (the
+// execute() challenge step shows a PIN+security-question setup UI regardless of auth method).
+// There is currently no way to fully eliminate the PIN step with this product. createWallet()
+// (no PIN) was tried and confirmed NOT to bypass this - its response is still just a
+// challengeId, same as createUserPinWithWallets. Using createUserPinWithWallets here since it's
+// the documented, correct call.
+//
+// Key custody is Circle's 2-of-2 MPC (Circle + the authenticated user) - there is no exportable
+// private key, so this is NOT bridged into the ERC-4337/Pimlico smart-account setup built for
+// the agent (agentSmartAccountService.js). Instead, users get Circle's own SCA wallet type,
+// intended to pair with Circle's Gas Station (confirmed to support Arc Testnet) for sponsorship -
+// a separate mechanism from Pimlico, matching that this is a different identity.
 //
 // Setup requirements not yet configured (see README known limitations):
 //   - CIRCLE_USER_WALLETS_APP_ID: created in Circle's Console (Web3 Services > User-Controlled
@@ -53,9 +62,9 @@ export async function createUserToken(userId) {
   return resp.data;
 }
 
-/// Step 3: after OTP verification, create the user's wallet (SCA type, Arc Testnet) alongside
-/// PIN setup. Circle's Web SDK renders the hosted PIN-creation UI; this call is what actually
-/// provisions the wallet once that challenge is satisfied client-side.
+/// Step 3: after OTP verification, request wallet creation (SCA, Arc Testnet). Returns a
+/// challengeId - Circle's Web SDK renders the hosted PIN+security-question setup UI to complete
+/// it (unavoidable with this product, see file header comment), then the wallet is provisioned.
 export async function createUserWallet({ userToken, accountType = 'SCA' }) {
   const c = getClient();
   const resp = await c.createUserPinWithWallets({
