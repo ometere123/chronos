@@ -52,14 +52,18 @@ export function useEmailWallet() {
       if (!sdk) {
         throw new Error('SDK session lost - please restart sign-up');
       }
+      console.log('[CHRONOS email wallet] setAuthentication with userToken', userToken?.slice(0, 20));
       sdk.setAuthentication({ userToken, encryptionKey });
 
+      console.log('[CHRONOS email wallet] requesting wallet creation challenge');
       const { data: challenge } = await apiClient.post('/user-wallet/create-wallet', { userToken });
+      console.log('[CHRONOS email wallet] got challenge', challenge);
 
       setStep('awaiting-pin');
       sdk.execute(challenge.challengeId, async (err) => {
+        console.log('[CHRONOS email wallet] execute() completed', { err });
         if (err) {
-          setError(err.message || 'Wallet creation failed');
+          setError(err.message || JSON.stringify(err) || 'Wallet creation failed');
           return;
         }
 
@@ -76,7 +80,14 @@ export function useEmailWallet() {
         setStep('done');
       });
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || err.message || 'Failed to create wallet');
+      console.error('[CHRONOS email wallet] createWallet failed', err);
+      setError(
+        err?.response?.data?.error?.message ||
+        err?.response?.data?.error?.detail ||
+        err?.message ||
+        JSON.stringify(err) ||
+        'Failed to create wallet'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -102,8 +113,9 @@ export function useEmailWallet() {
       await apiClient.post('/user-wallet/signup', { userId });
 
       const sdk = new W3SSdk({ appSettings: { appId } }, (loginErr, result) => {
+        console.log('[CHRONOS email wallet] onLoginComplete', { loginErr, result });
         if (loginErr || !result) {
-          setError(loginErr?.message || 'Email verification failed');
+          setError(loginErr?.message || JSON.stringify(loginErr) || 'Email verification failed');
           return;
         }
         const emailResult = result as EmailLoginResult;
