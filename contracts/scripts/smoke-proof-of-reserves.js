@@ -15,6 +15,7 @@ async function main() {
   console.log("Deploying contracts...");
   const usdc = await viem.deployContract("MockERC20", ["USD Coin", "USDC", 1_000_000_000_000n]);
   const treasury = await viem.deployContract("Treasury", [
+    usdc.address,
     [deployer.account.address, user1.account.address, user2.account.address],
     2n,
   ]);

@@ -10,6 +10,7 @@ import hre from "hardhat";
 async function deployBase(viem, publicClient, deployer) {
   const usdc = await viem.deployContract("MockERC20", ["USD Coin", "USDC", 10_000_000_000_000n]);
   const treasury = await viem.deployContract("Treasury", [
+    usdc.address,
     [deployer.account.address, "0x0000000000000000000000000000000000000001", "0x0000000000000000000000000000000000000002"],
     2n,
   ]);
