@@ -64,7 +64,15 @@ contract VaultFactory is Ownable, ReentrancyGuard {
             tokenAddress: tokenAddress,
             vaultType: vaultType,
             status: TimeLockVault.VaultStatus.ACTIVE,
-            bridgeTxHash: 0x0
+            bridgeTxHash: 0x0,
+            conditionOracle: address(0),
+            conditionThreshold: 0,
+            conditionAbove: false,
+            treasuryBalanceCheck: address(0),
+            treasuryBalanceThreshold: 0,
+            numTranches: 0,
+            claimedTranches: 0,
+            intervalSeconds: 0
         });
 
         vaultRegistry[vaultId] = vault;

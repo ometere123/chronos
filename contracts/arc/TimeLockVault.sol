@@ -5,6 +5,18 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
+/// @notice Minimal price oracle interface (see MockPriceOracle.sol - DEMO MOCK, replace with a
+/// real Arc oracle such as Band Protocol when a confirmed testnet feed address is available).
+interface IPriceOracle {
+    function getPrice() external view returns (uint256);
+}
+
+/// @notice Minimal interface onto Treasury's live USDC balance, used for the optional
+/// treasury-balance-guard unlock condition (Item 6).
+interface ITreasuryBalanceView {
+    function getUsdcBalance() external view returns (uint256);
+}
+
 /// @title TimeLockVault
 /// @notice Holds locked tokens, enforces unlock times, processes claims
 contract TimeLockVault is Ownable, ReentrancyGuard {
@@ -18,6 +30,9 @@ contract TimeLockVault is Ownable, ReentrancyGuard {
     event VaultCollateralLocked(bytes32 indexed vaultId);
     event VaultCollateralUnlocked(bytes32 indexed vaultId);
     event VaultCollateralLiquidated(bytes32 indexed vaultId, address indexed recipient, uint256 amount);
+    event ConditionSet(bytes32 indexed vaultId, address conditionOracle, uint256 conditionThreshold, bool conditionAbove, address treasuryAddressCheck, uint256 treasuryBalanceThreshold);
+    event StreamingVaultCreated(bytes32 indexed vaultId, uint32 numTranches, uint256 intervalSeconds);
+    event TrancheClaimed(bytes32 indexed vaultId, address indexed owner, uint32 trancheIndex, uint256 amount);
 
     enum VaultType { FIXED, FLEXIBLE }
     enum VaultStatus { ACTIVE, MATURE, CLAIMED, FAILED }
@@ -35,6 +50,17 @@ contract TimeLockVault is Ownable, ReentrancyGuard {
         VaultType vaultType;
         VaultStatus status;
         bytes32 bridgeTxHash;
+        // --- Optional oracle-gated unlock condition (Item 5). Zero address == disabled. ---
+        address conditionOracle;
+        uint256 conditionThreshold;
+        bool conditionAbove; // true: price must be >= threshold, false: price must be <= threshold
+        // --- Optional treasury-balance-guard condition (Item 6). Zero address == disabled. ---
+        address treasuryBalanceCheck;
+        uint256 treasuryBalanceThreshold;
+        // --- Optional recurring/streaming release schedule (Item 7). numTranches == 0 == disabled. ---
+        uint32 numTranches;
+        uint32 claimedTranches;
+        uint256 intervalSeconds;
     }
 
     struct Deposit {
@@ -129,6 +155,161 @@ contract TimeLockVault is Ownable, ReentrancyGuard {
         return vaultId;
     }
 
+    /// @notice Input params for depositFromBridgeAdvanced (Items 5/6/7), bundled in a struct to
+    /// avoid stack-too-deep. All condition/streaming fields are optional and default to disabled.
+    struct AdvancedDepositParams {
+        uint256 amount;
+        address owner;
+        uint256 unlockAt;
+        uint32 sourceChain;
+        uint8 bridgeProtocol;
+        address tokenAddress;
+        VaultType vaultType;
+        // Item 5: oracle-gated unlock. conditionOracle == address(0) disables this check.
+        address conditionOracle;
+        uint256 conditionThreshold;
+        bool conditionAbove;
+        // Item 6: treasury-balance guard. treasuryBalanceCheck == address(0) disables this check.
+        address treasuryBalanceCheck;
+        uint256 treasuryBalanceThreshold;
+        // Item 7: streaming/recurring release. numTranches == 0 disables streaming (single unlock).
+        uint32 numTranches;
+        uint256 intervalSeconds;
+    }
+
+    /// @notice Create a vault from a bridge deposit with optional oracle/treasury unlock
+    /// conditions and/or a recurring release schedule. Backward compatible: vaults created via
+    /// the plain `depositFromBridge` above always have every optional field disabled/zeroed.
+    function depositFromBridgeAdvanced(AdvancedDepositParams calldata p) external returns (bytes32) {
+        require(msg.sender == bridgeOrchestratorAddress, "Only bridge orchestrator");
+        require(p.amount > 0, "Amount must be > 0");
+        require(p.owner != address(0), "Invalid owner");
+        require(p.unlockAt > block.timestamp, "Unlock time must be in future");
+        if (p.numTranches > 0) {
+            require(p.intervalSeconds > 0, "Invalid interval");
+        }
+
+        bytes32 vaultId = keccak256(abi.encodePacked(p.owner, block.timestamp, p.amount, "advanced"));
+
+        Vault storage vault = vaults[vaultId];
+        vault.vaultId = vaultId;
+        vault.owner = p.owner;
+        vault.totalAmount = p.amount;
+        vault.createdAt = block.timestamp;
+        vault.unlockAt = p.unlockAt;
+        vault.sourceChain = p.sourceChain;
+        vault.bridgeProtocol = p.bridgeProtocol;
+        vault.tokenAddress = p.tokenAddress;
+        vault.vaultType = p.vaultType;
+        vault.status = VaultStatus.ACTIVE;
+        vault.bridgeTxHash = 0x0;
+
+        vault.conditionOracle = p.conditionOracle;
+        vault.conditionThreshold = p.conditionThreshold;
+        vault.conditionAbove = p.conditionAbove;
+
+        vault.treasuryBalanceCheck = p.treasuryBalanceCheck;
+        vault.treasuryBalanceThreshold = p.treasuryBalanceThreshold;
+
+        vault.numTranches = p.numTranches;
+        vault.claimedTranches = 0;
+        vault.intervalSeconds = p.intervalSeconds;
+
+        vaultDeposits[vaultId].push(Deposit({
+            amount: p.amount,
+            depositedAt: block.timestamp,
+            sourceChain: p.sourceChain,
+            bridgeTxHash: 0x0
+        }));
+
+        userVaults[p.owner].push(vaultId);
+        allVaultIds.push(vaultId);
+
+        emit VaultCreated(vaultId, p.owner, p.amount, p.unlockAt);
+        if (p.conditionOracle != address(0) || p.treasuryBalanceCheck != address(0)) {
+            emit ConditionSet(vaultId, p.conditionOracle, p.conditionThreshold, p.conditionAbove, p.treasuryBalanceCheck, p.treasuryBalanceThreshold);
+        }
+        if (p.numTranches > 0) {
+            emit StreamingVaultCreated(vaultId, p.numTranches, p.intervalSeconds);
+        }
+        return vaultId;
+    }
+
+    /// @dev Checks the optional oracle-gated (Item 5) and treasury-balance-guard (Item 6)
+    /// conditions for a vault. Returns true if both disabled or both satisfied.
+    function _extraConditionsMet(Vault storage vault) internal view returns (bool) {
+        if (vault.conditionOracle != address(0)) {
+            uint256 price = IPriceOracle(vault.conditionOracle).getPrice();
+            if (vault.conditionAbove) {
+                if (price < vault.conditionThreshold) return false;
+            } else {
+                if (price > vault.conditionThreshold) return false;
+            }
+        }
+        if (vault.treasuryBalanceCheck != address(0)) {
+            uint256 bal = ITreasuryBalanceView(vault.treasuryBalanceCheck).getUsdcBalance();
+            if (bal < vault.treasuryBalanceThreshold) return false;
+        }
+        return true;
+    }
+
+    /// @notice Whether a vault's optional oracle/treasury unlock conditions are currently met
+    /// (independent of the time-based unlockAt check).
+    function conditionsMet(bytes32 vaultId) external view returns (bool) {
+        return _extraConditionsMet(vaults[vaultId]);
+    }
+
+    /// @notice Number of tranches currently matured (elapsed-time based) for a streaming vault.
+    /// Returns 0 for non-streaming vaults.
+    function maturedTrancheCount(bytes32 vaultId) public view returns (uint32) {
+        Vault storage vault = vaults[vaultId];
+        if (vault.numTranches == 0) return 0;
+        if (block.timestamp < vault.createdAt) return 0;
+        uint256 elapsed = block.timestamp - vault.createdAt;
+        uint256 matured = elapsed / vault.intervalSeconds;
+        if (matured > vault.numTranches) matured = vault.numTranches;
+        return uint32(matured);
+    }
+
+    /// @notice Claim all newly-matured, not-yet-claimed tranches of a streaming vault.
+    /// Equal amounts of totalAmount / numTranches per tranche, with any rounding remainder
+    /// folded into the final tranche so the sum of all tranche payouts equals totalAmount exactly.
+    function claimStreamingTranches(bytes32 vaultId) external nonReentrant {
+        Vault storage vault = vaults[vaultId];
+        require(vault.owner == msg.sender, "Only owner can claim");
+        require(vault.numTranches > 0, "Not a streaming vault");
+        require(!vaultLocked[vaultId], "Vault locked as collateral");
+        require(vault.status == VaultStatus.ACTIVE, "Vault not active");
+        require(_extraConditionsMet(vault), "Unlock conditions not met");
+
+        uint32 matured = maturedTrancheCount(vaultId);
+        require(matured > vault.claimedTranches, "No new tranches matured");
+
+        uint256 perTranche = vault.totalAmount / vault.numTranches;
+        uint32 fromIdx = vault.claimedTranches;
+        uint256 totalPayout = 0;
+
+        for (uint32 i = fromIdx; i < matured; i++) {
+            uint256 trancheAmount = perTranche;
+            if (i == vault.numTranches - 1) {
+                // Final tranche absorbs the rounding remainder.
+                trancheAmount = vault.totalAmount - (perTranche * (vault.numTranches - 1));
+            }
+            totalPayout += trancheAmount;
+            emit TrancheClaimed(vaultId, msg.sender, i, trancheAmount);
+        }
+
+        vault.claimedTranches = matured;
+
+        if (matured == vault.numTranches) {
+            vault.status = VaultStatus.CLAIMED;
+            emit VaultStatusChanged(vaultId, VaultStatus.CLAIMED);
+        }
+
+        require(IERC20(vault.tokenAddress).transfer(msg.sender, totalPayout), "Transfer failed");
+        emit VaultClaimed(vaultId, msg.sender, totalPayout, 0);
+    }
+
     /// @notice Input params for depositFromBridgeSplit, bundled in a struct to avoid stack-too-deep.
     struct SplitDepositParams {
         uint256 amount;
@@ -206,6 +387,7 @@ contract TimeLockVault is Ownable, ReentrancyGuard {
         require(!vaultLocked[vaultId], "Vault locked as collateral");
         require(vault.status == VaultStatus.ACTIVE, "Vault not active");
         require(block.timestamp >= vault.unlockAt, "Vault not mature");
+        require(_extraConditionsMet(vault), "Unlock conditions not met");
 
         uint8 idx = uint8(bucket);
         require(!bucketClaimed[vaultId][idx], "Bucket already claimed");
@@ -270,7 +452,9 @@ contract TimeLockVault is Ownable, ReentrancyGuard {
         require(vault.owner == msg.sender, "Only owner can claim");
         require(!vaultLocked[vaultId], "Vault locked as collateral");
         require(vault.status == VaultStatus.ACTIVE, "Vault not active");
+        require(vault.numTranches == 0, "Use claimStreamingTranches for streaming vaults");
         require(block.timestamp >= vault.unlockAt, "Vault not mature");
+        require(_extraConditionsMet(vault), "Unlock conditions not met");
 
         uint256 claimAmount = vault.totalAmount;
         require(claimAmount > 0, "Nothing to claim");
