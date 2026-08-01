@@ -139,19 +139,29 @@ Other relevant addresses/config: `ARC_USDC`, `ARC_CHAIN_ID` (`5042002`), `ARC_CC
   `MockPriceOracle.sol` remains available as a fallback for demo scenarios that need a controllable
   price.
 - **Vault-maintenance agent (autonomous claim)** — a vault owner can call
-  `TimeLockVault.setVaultDelegate(vaultId, agentAddress)` to authorize an address (e.g. the
-  agent's Circle Wallet) to trigger `claimVault()` on their behalf. Payout always goes to the
+  `TimeLockVault.setVaultDelegate(vaultId, agentAddress)` to authorize an address (the agent's
+  ERC-4337 smart account) to trigger `claimVault()` on their behalf. Payout always goes to the
   vault owner; the delegate cannot redirect funds. `backend/src/services/vaultAgentService.js`
-  scans for eligible delegated vaults and submits claims via Circle's Developer-Controlled Wallets
-  contract-execution API.
+  scans for eligible delegated vaults and submits claims.
+- **Gas-sponsored autonomous execution (Pimlico + ERC-4337)** — the agent's claim transactions
+  are sponsored via Pimlico's real, live bundler + paymaster on Arc Testnet
+  (`backend/src/services/agentSmartAccountService.js`, a standard ERC-4337 `SimpleAccount`). The
+  owner key never needs Arc gas. **Verified with a full real end-to-end run against the live
+  deployed contracts** (`contracts/scripts/e2e-agent-sponsored-claim.js`): created a real vault,
+  owner delegated it to the agent, agent executed a genuinely gas-sponsored `claimVault()` —
+  result `success: true`, tx
+  [`0x3b22adc81a7d62e97807c1a0b7a29163cf2b6f40ee4b726fce7ba31869eb8a98`](https://testnet.arcscan.app/tx/0x3b22adc81a7d62e97807c1a0b7a29163cf2b6f40ee4b726fce7ba31869eb8a98),
+  owner received 0.999 USDC, agent received 0.001 USDC, agent held zero USDC and zero gas the
+  entire time.
 - **Agent self-payment (on-chain fee split)** — when a delegate (not the owner) triggers a claim,
   `TimeLockVault.sol` automatically pays that delegate a small, owner-settable fee (`agentFeeBps`,
   default 0.10%, capped at 1%) out of the claimed amount, with the remainder going to the owner.
-  Owner-triggered claims are unaffected — zero fee. This gives the agent a real, on-chain payment
-  for autonomous service without needing separate off-chain payment infrastructure.
+  Owner-triggered claims are unaffected — zero fee. Confirmed in the same real end-to-end run
+  above (exact 0.10% fee paid to the agent).
 - **Circle Developer-Controlled Wallet** — a real wallet, created and verified live on Arc Testnet
-  via Circle's sandbox API (`backend/src/services/circleWalletService.js`), backs the
-  vault-maintenance agent above.
+  via Circle's sandbox API (`backend/src/services/circleWalletService.js`). Kept as an
+  alternative, non-sponsored claim path (`executeAgentClaimViaCircleWallet()`) — see known
+  limitations.
 - **Circle App Kit** — `backend/src/services/appKitBridgeService.js` uses Circle's real `AppKit`
   SDK (`kit.bridge()` / `kit.estimateBridge()`) to deposit USDC from a source chain into Arc.
   Verified live: `kit.getSupportedChains()` confirms Arc Testnet is registered with full CCTP v2
@@ -181,10 +191,15 @@ Read before demoing or judging — these are real, current gaps, not hedging:
   instead implemented as a direct on-chain fee split in `TimeLockVault.claimVault()` — simpler,
   fully on-chain, and verified — rather than the off-chain x402/Gateway batching flow Nanopayments
   uses. Worth revisiting if a demo specifically wants to showcase Circle's Nanopayments product.
-- **The agent's Circle Wallet is unfunded** — it exists and is verified live on Arc Testnet, but
-  has not been sent testnet USDC/gas, so `vaultAgentService.executeAgentClaim()` has not been
-  exercised end-to-end against a real delegated vault (no vault has used `setVaultDelegate()` yet
-  either, since none has been created through the full deposit flow in this environment).
+- **The agent's Circle Wallet is unfunded and is not the primary claim path.** It exists and is
+  verified live on Arc Testnet, but `executeAgentClaimViaCircleWallet()` needs the wallet to hold
+  its own Arc gas, which it does not. The primary claim path (`executeAgentClaim()`, via the
+  ERC-4337 smart account + Pimlico paymaster) does not have this limitation and has been verified
+  end-to-end — see "Gas-sponsored autonomous execution" above.
+- **The agent's smart account owner key is a single, unshared key.** It's deliberately generated
+  fresh and never funded (that's the point — Pimlico sponsors its gas), but it's still a single
+  point of failure for the agent's ability to act. Production hardening would mean rotating it out
+  of a plain env var into a proper key-management setup.
 - **`npx hardhat test` is currently broken** under this repo's Hardhat 3 setup. Contract behavior
   is instead verified via 10 standalone smoke scripts in `contracts/scripts/smoke-*.js`, run with
   `npx hardhat run scripts/smoke-X.js`. See "Verifying the build" below.
