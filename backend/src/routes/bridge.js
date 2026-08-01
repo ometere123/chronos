@@ -4,9 +4,22 @@ import { asyncHandler } from '../middleware/errorHandler.js';
 import { bridgeService } from '../services/bridgeService.js';
 import { bridgeTrackerService } from '../services/bridgeTrackerService.js';
 import { cctpRelayService } from '../services/cctpRelayService.js';
+import { getAppKitSupportedChains } from '../services/appKitBridgeService.js';
 import logger from '../config/logger.js';
 
 const router = express.Router();
+
+// Circle App Kit's live supported-chain registry (read-only, no keys required). Confirms
+// Arc Testnet's real CCTP config as returned by Circle's SDK - see appKitBridgeService.js.
+router.get('/appkit/supported-chains', asyncHandler(async (req, res) => {
+  try {
+    const chains = await getAppKitSupportedChains();
+    res.json({ chains });
+  } catch (err) {
+    logger.error('Error fetching App Kit supported chains', { error: err.message });
+    res.status(502).json({ error: { message: 'Failed to fetch App Kit supported chains' } });
+  }
+}));
 
 // Get bridge transaction status
 router.get('/status/:txHash', asyncHandler(async (req, res) => {
