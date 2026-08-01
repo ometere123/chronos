@@ -61,6 +61,15 @@ export const contractAddresses = {
   scheduledPayment: normalizeAddress(
     firstEnv('ARC_SCHEDULED_PAYMENT', 'ARC_SCHEDULED_PAYMENT_ADDRESS')
   ),
+  creditLine: normalizeAddress(
+    firstEnv('ARC_CREDIT_LINE', 'ARC_CREDIT_LINE_ADDRESS')
+  ),
+  mockPriceOracle: normalizeAddress(
+    firstEnv('ARC_MOCK_PRICE_ORACLE', 'ARC_MOCK_PRICE_ORACLE_ADDRESS')
+  ),
+  bandOracleAdapter: normalizeAddress(
+    firstEnv('ARC_BAND_ORACLE_ADAPTER', 'ARC_BAND_ORACLE_ADAPTER_ADDRESS')
+  ),
 };
 
 export function getExplorerAddressUrl(address) {
