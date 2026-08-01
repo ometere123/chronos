@@ -72,6 +72,25 @@ export const bridgeService = {
     }
   },
 
+  // Update the CCTP attestation state machine column (Item 8). Independent of `status` so a
+  // crash mid-flow resumes from the last confirmed state:
+  // PENDING_ATTESTATION -> ATTESTED -> RECEIVED_ON_ARC -> VAULT_CREATED (or FAILED).
+  async updateBridgeState(txHash, bridgeState) {
+    try {
+      const result = await pool.query(
+        `UPDATE bridge_transactions
+         SET bridge_state = $1, bridge_state_updated_at = NOW()
+         WHERE tx_hash = $2
+         RETURNING *`,
+        [bridgeState, txHash]
+      );
+      return result.rows[0];
+    } catch (err) {
+      logger.error('Error updating bridge state', { error: err.message, txHash, bridgeState });
+      throw err;
+    }
+  },
+
   // Increment retry count
   async incrementRetryCount(txHash) {
     try {

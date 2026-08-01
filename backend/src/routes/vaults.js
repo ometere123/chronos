@@ -5,7 +5,7 @@ import { pool } from '../config/database.js';
 import { vaultService } from '../services/vaultService.js';
 import { bridgeService } from '../services/bridgeService.js';
 import { arcSettlementService } from '../services/arcSettlementService.js';
-import { cctpRelayService } from '../services/cctpRelayService.js';
+import { cctpRelayService, isSupportedCctpChain } from '../services/cctpRelayService.js';
 import { gasEstimationService } from '../services/gasEstimationService.js';
 import logger from '../config/logger.js';
 import { contractAddresses } from '../config/contracts.js';
@@ -1081,10 +1081,12 @@ router.post('/:vaultId/claim', authMiddleware, asyncHandler(async (req, res) => 
       });
     }
 
-    if (claimDestinationChain !== Number(vault.source_chain)) {
+    // Vaults can be claimed back to their original source chain, or bridged onward to any
+    // other CCTP-supported destination chain (not only the chain the deposit originated from).
+    if (!isSupportedCctpChain(claimDestinationChain)) {
       return res.status(400).json({
         error: {
-          message: 'Mature vaults can currently be claimed either on Arc Testnet or back to their original source chain.'
+          message: 'Unsupported destination chain for this claim. Choose Arc Testnet or a supported CCTP destination chain.'
         }
       });
     }

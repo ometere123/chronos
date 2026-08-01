@@ -11,6 +11,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 contract CCTPReceiver is Ownable, ReentrancyGuard {
     event BridgeInitiated(address indexed user, uint256 amount, address arcRecipient);
     event MessageReceived(bytes32 indexed messageHash);
+    event MessageTransmitterUpdated(address indexed newTransmitter);
 
     address public cctpMessageTransmitter;
     address public cctpTokenMessenger;
@@ -19,6 +20,11 @@ contract CCTPReceiver is Ownable, ReentrancyGuard {
 
     // Pending messages queue
     mapping(bytes32 => bytes) public pendingMessages;
+
+    /// @notice Replay guard: messageHash => already processed. Once a CCTP message has been
+    /// handled it can never be replayed through this contract again, even if the canonical
+    /// MessageTransmitter were somehow tricked into resubmitting it.
+    mapping(bytes32 => bool) public processedMessages;
 
     constructor(
         address _messageTransmitter,
@@ -45,10 +51,20 @@ contract CCTPReceiver is Ownable, ReentrancyGuard {
         require(msg.sender == cctpMessageTransmitter, "Only CCTP transmitter");
 
         bytes32 messageHash = keccak256(message);
+        require(!processedMessages[messageHash], "Message already processed");
+        processedMessages[messageHash] = true;
         pendingMessages[messageHash] = attestation;
 
         emit MessageReceived(messageHash);
         return true;
+    }
+
+    /// @notice Update the canonical CCTP MessageTransmitter address that is authorized to call
+    /// handleReceiveMessage. Only the owner may repoint this (e.g. after a CCTP contract upgrade).
+    function setMessageTransmitter(address newTransmitter) external onlyOwner {
+        require(newTransmitter != address(0), "Invalid transmitter");
+        cctpMessageTransmitter = newTransmitter;
+        emit MessageTransmitterUpdated(newTransmitter);
     }
 
     /// @notice Burn USDC and bridge to Arc

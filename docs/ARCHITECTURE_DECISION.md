@@ -58,12 +58,46 @@ Use `uint32` or larger for chain identifiers. `uint8` cannot represent real EVM 
 
 Bridge protocol can remain a small enum/code, but chain ID and CCTP domain should be separate concepts.
 
+## How attestation verification works
+
+Inbound and outbound CCTP transfers are settled with real Circle attestations, not a
+relayer-trusted shortcut. The flow lives in `backend/src/services/cctpRelayService.js` and
+`backend/src/services/bridgeTrackerService.js`:
+
+1. **Fetch.** `cctpRelayService.fetchMessage(sourceDomain, txHash)` calls Circle's Iris API
+   (`GET https://iris-api-sandbox.circle.com/v2/messages/{sourceDomainId}?transactionHash={txHash}`)
+   and returns the decoded message record, including `status`, `message`, and `attestation`.
+2. **Poll with backoff.** `waitForAttestation()` polls that endpoint until `status === "complete"`
+   and both `message` and `attestation` are present, or a timeout elapses. If attestation is not
+   yet ready the caller is told `PENDING_ATTESTATION` rather than erroring.
+3. **Verify before relaying.** Once attestation is ready, `finalizeBurnAndMint()` decodes the CCTP
+   message body and checks the mint recipient and amount against what the backend expects
+   *before* it will submit anything. A recipient mismatch is a hard failure (`RECIPIENT_MISMATCH`),
+   not a silent pass-through.
+4. **Submit the real receiveMessage call.** The verified `(message, attestation)` pair is sent to
+   the canonical CCTP `MessageTransmitterV2.receiveMessage(message, attestation)` on the
+   destination chain (Arc for inbound, the chosen destination chain for outbound claims). This is
+   Circle's own contract, not a custom shim - it independently verifies the attestation signature
+   and enforces its own nonce-based replay protection.
+5. **State machine.** `bridge_transactions.bridge_state` persists progress through
+   `PENDING_ATTESTATION -> ATTESTED -> RECEIVED_ON_ARC -> VAULT_CREATED` (see
+   `backend/src/db/schema.sql`), so if the backend crashes mid-flow, `bridgeTrackerService`'s
+   polling loop resumes exactly where it left off on the next tick instead of getting stuck. All
+   Arc-side application contracts additionally track processed CCTP message hashes
+   (`CCTPReceiver.processedMessages`) and reject replays and calls from any address other than the
+   configured MessageTransmitter, as a defense-in-depth layer on top of Circle's own replay guard.
+
 ## Open Implementation Risks
 
-- The current bridge orchestrator is still a relayer-assisted stub, not full CCTP attestation enforcement.
 - Claim and flexible withdrawal flows must move real tokens on-chain before this can be called non-custodial.
 - Proof-of-reserves must read actual vault token balances, not database-only totals.
 - Arbitrary-token support requires current Arc route confirmation before any implementation promise.
+- ScheduledPayment (treasury payroll) execution relies on a single centralized backend cron
+  keeper (`backend/src/services/scheduledPaymentService.js`) since no on-chain keeper network is
+  live on Arc Testnet yet. All payment-safety logic (due timestamp, double-execution guard,
+  balance threshold guard) is enforced on-chain in `ScheduledPayment.sol`, so the keeper can only
+  delay a payment, never steal funds or bypass the guard. See the comment at the top of that file
+  for the plan to move to Chainlink Automation (or equivalent) once available on Arc.
 
 ## References
 

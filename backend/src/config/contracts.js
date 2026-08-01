@@ -58,6 +58,9 @@ export const contractAddresses = {
   governanceTimelock: normalizeAddress(
     firstEnv('ARC_GOVERNANCE_TIMELOCK', 'ARC_GOVERNANCE_TIMELOCK_ADDRESS')
   ),
+  scheduledPayment: normalizeAddress(
+    firstEnv('ARC_SCHEDULED_PAYMENT', 'ARC_SCHEDULED_PAYMENT_ADDRESS')
+  ),
 };
 
 export function getExplorerAddressUrl(address) {

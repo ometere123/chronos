@@ -179,6 +179,14 @@ function calculateBufferedFeeUnits(amount, minimumFeeBps) {
   return ((feeUnits * 120n) / 100n).toString();
 }
 
+export function isSupportedCctpChain(chainId) {
+  return Boolean(CHAIN_CONFIGS[Number(chainId)]?.rpcUrl && CHAIN_CONFIGS[Number(chainId)]?.messageTransmitter);
+}
+
+export function getSupportedCctpChainIds() {
+  return Object.keys(CHAIN_CONFIGS).map(Number);
+}
+
 export class CctpRelayService {
   constructor() {
     this.privateKey = process.env.PRIVATE_KEY;

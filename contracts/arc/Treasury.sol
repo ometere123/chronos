@@ -13,6 +13,8 @@ contract Treasury is Ownable, ReentrancyGuard {
     event MultisigThresholdUpdated(uint256 newThreshold);
     event SignerAdded(address indexed newSigner);
     event SignerRemoved(address indexed signer);
+    event ScheduledPaymentAddressUpdated(address indexed newAddress);
+    event FundsReleased(address indexed recipient, uint256 amount);
 
     IERC20 public immutable usdc;
     uint256 public accumulatedFees;
@@ -20,6 +22,10 @@ contract Treasury is Ownable, ReentrancyGuard {
     uint256 public multisigThreshold;
 
     mapping(address => bool) public isMultisigSigner;
+
+    /// @notice The single ScheduledPayment contract authorized to pull funds via releaseFunds.
+    /// Mirrors how TimeLockVault gates its bridge-only functions to bridgeOrchestratorAddress.
+    address public scheduledPaymentAddress;
 
     constructor(address usdcAddress, address[] memory initialSigners, uint256 threshold) {
         require(usdcAddress != address(0), "Invalid USDC address");
@@ -57,6 +63,25 @@ contract Treasury is Ownable, ReentrancyGuard {
         require(usdc.transfer(destinationAddress, amount), "USDC transfer failed");
 
         emit FeeWithdrawn(amount, destinationAddress);
+    }
+
+    /// @notice Set the ScheduledPayment contract authorized to call releaseFunds
+    function setScheduledPaymentAddress(address newAddress) external onlyOwner {
+        require(newAddress != address(0), "Invalid address");
+        scheduledPaymentAddress = newAddress;
+        emit ScheduledPaymentAddressUpdated(newAddress);
+    }
+
+    /// @notice Release USDC directly from the Treasury's on-chain balance (not accumulatedFees
+    /// accounting) to a recipient. Only callable by the configured ScheduledPayment contract, which
+    /// itself enforces the payment schedule and the post-payout balance threshold guard.
+    function releaseFunds(address recipient, uint256 amount) external nonReentrant {
+        require(msg.sender == scheduledPaymentAddress, "Only scheduled payment contract");
+        require(recipient != address(0), "Invalid recipient");
+        require(amount > 0, "Amount must be > 0");
+
+        require(usdc.transfer(recipient, amount), "USDC transfer failed");
+        emit FundsReleased(recipient, amount);
     }
 
     /// @notice Get current fee balance (accounting balance)

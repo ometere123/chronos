@@ -96,6 +96,7 @@ export class BridgeTrackerService {
       const attestationData = parseBridgeMetadata(transaction.attestation_data);
 
       if (transaction.direction === 'INBOUND') {
+        // Attestation not yet fetched/complete at the start of this tick -> still PENDING_ATTESTATION.
         const relayResult = await cctpRelayService.finalizeBurnAndMint({
           burnTxHash: transaction.tx_hash,
           sourceChain: transaction.from_chain,
@@ -106,6 +107,9 @@ export class BridgeTrackerService {
         });
 
         if (relayResult.state === 'COMPLETE') {
+          // Real attestation fetched (ATTESTED) and receiveMessage submitted on Arc (RECEIVED_ON_ARC)
+          // in the same call; the vault-creation settlement step downstream sets VAULT_CREATED.
+          await bridgeService.updateBridgeState(transaction.tx_hash, 'RECEIVED_ON_ARC');
           await bridgeService.updateBridgeStatus(
             transaction.tx_hash,
             'COMPLETE',
@@ -125,6 +129,7 @@ export class BridgeTrackerService {
             destinationMintTxHash: relayResult.destinationTxHash,
           });
         } else {
+          await bridgeService.updateBridgeState(transaction.tx_hash, 'PENDING_ATTESTATION');
           await bridgeService.updateBridgeStatus(
             transaction.tx_hash,
             'PENDING',

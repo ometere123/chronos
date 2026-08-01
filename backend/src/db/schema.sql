@@ -85,6 +85,17 @@ CREATE INDEX IF NOT EXISTS idx_bridge_status ON bridge_transactions(status);
 CREATE INDEX IF NOT EXISTS idx_bridge_tx_hash ON bridge_transactions(tx_hash);
 CREATE INDEX IF NOT EXISTS idx_bridge_created ON bridge_transactions(created_at);
 
+-- CCTP attestation state machine (Item 8): tracks progress through real Circle attestation
+-- verification and settlement independent of the coarser `status` column above, so a backend
+-- crash mid-flow can resume from the last confirmed state instead of getting stuck.
+--   PENDING_ATTESTATION -> ATTESTED -> RECEIVED_ON_ARC -> VAULT_CREATED
+ALTER TABLE bridge_transactions ADD COLUMN IF NOT EXISTS bridge_state VARCHAR(30)
+    NOT NULL DEFAULT 'PENDING_ATTESTATION'
+    CHECK (bridge_state IN ('PENDING_ATTESTATION', 'ATTESTED', 'RECEIVED_ON_ARC', 'VAULT_CREATED', 'FAILED'));
+ALTER TABLE bridge_transactions ADD COLUMN IF NOT EXISTS bridge_state_updated_at TIMESTAMPTZ DEFAULT NOW();
+
+CREATE INDEX IF NOT EXISTS idx_bridge_state ON bridge_transactions(bridge_state);
+
 -- Create protocol stats table
 CREATE TABLE IF NOT EXISTS protocol_stats (
     id BIGSERIAL PRIMARY KEY,

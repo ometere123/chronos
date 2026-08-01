@@ -13,6 +13,7 @@ import usersRoutes from './routes/users.js';
 import authRoutes from './routes/auth.js';
 import { eventListenerService } from './services/eventListenerService.js';
 import { bridgeTrackerService } from './services/bridgeTrackerService.js';
+import { scheduledPaymentService } from './services/scheduledPaymentService.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -71,7 +72,8 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     services: {
       eventListener: eventListenerService.isRunning ? 'running' : 'stopped',
-      bridgeTracker: bridgeTrackerService.isRunning ? 'running' : 'stopped'
+      bridgeTracker: bridgeTrackerService.isRunning ? 'running' : 'stopped',
+      scheduledPaymentKeeper: scheduledPaymentService.isRunning ? 'running' : 'stopped'
     }
   });
 });
@@ -101,6 +103,7 @@ server.on('listening', () => {
   // Start background services
   eventListenerService.start();
   bridgeTrackerService.start();
+  scheduledPaymentService.start();
 
   logger.info('Background services started');
 });
@@ -121,6 +124,7 @@ process.on('SIGTERM', () => {
   // Stop background services
   eventListenerService.stop();
   bridgeTrackerService.stop();
+  scheduledPaymentService.stop();
 
   server.close(() => {
     logger.info('Server closed');
