@@ -86,4 +86,38 @@ contract ProofOfReserves is Ownable {
 
         return isVerified;
     }
+
+    /// @notice Sum every ACTIVE (non-claimed) vault balance directly from TimeLockVault's on-chain
+    /// storage, iterating every vault ever created. This does not read the VaultFactory aggregate
+    /// counters or any backend database - it is a live recomputation from source-of-truth state.
+    function getLiveActiveLocked() public view returns (uint256 total) {
+        bytes32[] memory vaultIds = timeLockVault.getAllVaultIds();
+        for (uint256 i = 0; i < vaultIds.length; i++) {
+            TimeLockVault.Vault memory vault = timeLockVault.getVault(vaultIds[i]);
+            if (vault.status == TimeLockVault.VaultStatus.ACTIVE) {
+                total += vault.totalAmount;
+            }
+        }
+    }
+
+    /// @notice Live, fully on-chain proof-of-reserves check: actual USDC.balanceOf(TimeLockVault)
+    /// versus the live sum of active vault liabilities recomputed directly from TimeLockVault.
+    /// Safe to call from a live demo against real chain state - no caching, no DB reads.
+    function verifyLiveReserves() external view returns (
+        uint256 usdcBalance,
+        uint256 activeLocked,
+        uint256 activeVaultCount,
+        bool fullyReserved
+    ) {
+        usdcBalance = IERC20(usdcToken).balanceOf(address(timeLockVault));
+        bytes32[] memory vaultIds = timeLockVault.getAllVaultIds();
+        for (uint256 i = 0; i < vaultIds.length; i++) {
+            TimeLockVault.Vault memory vault = timeLockVault.getVault(vaultIds[i]);
+            if (vault.status == TimeLockVault.VaultStatus.ACTIVE) {
+                activeLocked += vault.totalAmount;
+                activeVaultCount++;
+            }
+        }
+        fullyReserved = usdcBalance >= activeLocked;
+    }
 }

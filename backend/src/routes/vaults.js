@@ -574,11 +574,68 @@ router.get('/:vaultId', asyncHandler(async (req, res) => {
     res.json({
       ...vault,
       deposits,
-      bridgeTransactions
+      bridgeTransactions,
+      splitAllocation: vaultService.getSplitAllocation(vault),
     });
   } catch (err) {
     logger.error('Error fetching vault', { error: err.message });
     res.status(500).json({ error: { message: 'Failed to fetch vault' } });
+  }
+}));
+
+// Record a split-vault bucket claim (savings|yield|reserve) after the on-chain claimBucket() tx
+// has confirmed. Mirrors the pattern used by /claim and /withdraw: the wallet transaction is the
+// source of truth, this just syncs backend state so the UI reflects it without a full re-index.
+router.post('/:vaultId/claim-bucket', authMiddleware, asyncHandler(async (req, res) => {
+  const { vaultId } = req.params;
+  const { bucket, claimTxHash } = req.body;
+  const userAddress = req.user.address ? req.user.address.toLowerCase() : null;
+
+  if (!userAddress) {
+    return res.status(400).json({
+      error: { message: 'No wallet address found in your wallet session. Please reconnect your wallet and try again.' }
+    });
+  }
+
+  if (!['savings', 'yield', 'reserve'].includes(bucket)) {
+    return res.status(400).json({ error: { message: 'Invalid bucket. Must be savings, yield, or reserve.' } });
+  }
+
+  if (typeof claimTxHash !== 'string' || !claimTxHash.startsWith('0x')) {
+    return res.status(400).json({
+      error: { message: 'Missing on-chain claimBucket transaction hash. Please retry after the wallet transaction is confirmed.' }
+    });
+  }
+
+  try {
+    const vault = await vaultService.getVault(vaultId);
+    if (!vault) {
+      return res.status(404).json({ error: { message: 'Vault not found' } });
+    }
+    if (vault.owner_address !== userAddress) {
+      return res.status(403).json({ error: { message: 'Not vault owner' } });
+    }
+    if (!vault.is_split) {
+      return res.status(400).json({ error: { message: 'Not a split vault' } });
+    }
+    if (Date.now() < new Date(vault.unlock_at).getTime()) {
+      return res.status(400).json({ error: { message: 'Vault not mature yet' } });
+    }
+
+    const updated = await vaultService.markBucketClaimed(vaultId, bucket);
+
+    logger.info('Split vault bucket claimed', { vaultId, userAddress, bucket, claimTxHash });
+
+    res.json({
+      vaultId,
+      bucket,
+      status: updated.status,
+      splitAllocation: vaultService.getSplitAllocation(updated),
+      claimTxHash,
+    });
+  } catch (err) {
+    logger.error('Error recording bucket claim', { error: err.message, vaultId, userAddress, bucket });
+    res.status(500).json({ error: { message: 'Failed to record bucket claim' } });
   }
 }));
 

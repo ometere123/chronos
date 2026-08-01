@@ -34,6 +34,18 @@ CREATE INDEX IF NOT EXISTS idx_vaults_status ON vaults(status);
 CREATE INDEX IF NOT EXISTS idx_vaults_unlock_at ON vaults(unlock_at);
 CREATE INDEX IF NOT EXISTS idx_vaults_token ON vaults(token_address);
 
+-- Smart Treasury Vaults: optional deposit-time split config (savings/yield/reserve buckets).
+-- One vault row, three named sub-balances tracked alongside it. Bps columns sum to 10000 when set.
+ALTER TABLE vaults ADD COLUMN IF NOT EXISTS is_split BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE vaults ADD COLUMN IF NOT EXISTS savings_bps INTEGER;
+ALTER TABLE vaults ADD COLUMN IF NOT EXISTS yield_bps INTEGER;
+ALTER TABLE vaults ADD COLUMN IF NOT EXISTS reserve_bps INTEGER;
+ALTER TABLE vaults ADD COLUMN IF NOT EXISTS savings_claimed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE vaults ADD COLUMN IF NOT EXISTS yield_claimed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE vaults ADD COLUMN IF NOT EXISTS reserve_claimed BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE INDEX IF NOT EXISTS idx_vaults_is_split ON vaults(is_split);
+
 -- Create vault deposits table
 CREATE TABLE IF NOT EXISTS vault_deposits (
     id BIGSERIAL PRIMARY KEY,
