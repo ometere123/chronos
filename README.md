@@ -1,101 +1,178 @@
 # CHRONOS
 
-Multi-Token Time-Locked Savings & Vesting Infrastructure on Arc Testnet.
+Time-locked USDC savings & vesting, plus treasury/lending infrastructure, on **Arc Testnet** via
+Circle CCTP.
 
-**Status:** Testnet Development (6-8 weeks to launch)
+Lock USDC for a fixed or flexible term, split a deposit into savings/yield/reserve buckets, gate
+an unlock on a price condition or a treasury balance, stream a deposit out over tranches, borrow
+against a locked vault, and verify every claim of "fully reserved" against a live on-chain call —
+not just a database.
 
-## Project Structure
+## Table of contents
 
-```
-CHRONOS/
-├── contracts/              # Solidity smart contracts
-│   ├── arc/               # Arc Testnet deployment
-│   └── [testnets]/        # Source chain receivers
-├── backend/               # Express.js + Supabase
-│   ├── src/
-│   │   ├── routes/        # API endpoints
-│   │   ├── services/      # Business logic
-│   │   ├── middleware/    # Auth, errors, logging
-│   │   └── config/        # Constants, env
-│   ├── package.json
-│   └── .env.local
-├── frontend/              # Next.js + React 18
-│   ├── app/               # Next.js App Router
-│   ├── components/        # React components
-│   ├── services/          # API client
-│   ├── hooks/             # React hooks
-│   ├── store/             # Zustand stores
-│   ├── package.json
-│   └── .env.local
-└── docs/                  # Documentation
-```
+- [Pitch](#pitch)
+- [Quickstart](#quickstart)
+- [Architecture overview](#architecture-overview)
+- [Deployed contracts](#deployed-contracts-arc-testnet)
+- [Implemented features](#implemented-features)
+- [Known limitations](#known-limitations)
+- [Verifying the build](#verifying-the-build)
 
-## Quick Start
+## Pitch
 
-### Smart Contracts
+CHRONOS is savings-and-vesting infrastructure for USDC on Arc: time-locked vaults with real
+penalty/discipline mechanics, a live proof-of-reserves check anyone can call without logging in,
+and treasury-adjacent primitives (credit lines, scheduled payouts, multi-condition unlocks) built
+on top of the same vault core. USDC moves onto Arc via Circle's CCTP V2, with attestation
+verification and replay protection enforced both by Circle's own contracts and by an
+application-level guard on top.
+
+## Quickstart
+
+### 1. Smart contracts
+
 ```bash
-cd contracts/arc
+cd contracts
 npm install
-npm run compile
-npm run test
-npm run deploy
+npx hardhat compile
+# Run smoke tests against a local/forked node (see "Verifying the build" below) —
+# `npx hardhat test` is currently broken under this Hardhat 3 setup; use the smoke scripts instead.
+npx hardhat run scripts/smoke-treasury.js
 ```
 
-### Backend
+### 2. Backend
+
 ```bash
 cd backend
 npm install
-cp .env.example .env.local
-npm run dev
+cp ../.env.example .env.local   # then fill in real values
+npm run dev            # http://localhost:3001
 ```
 
-### Frontend
+### 3. Frontend
+
 ```bash
 cd frontend
 npm install
-cp .env.example .env.local
-npm run dev
+cp .env.example .env.local      # then fill in real values
+npm run dev            # http://localhost:3000
 ```
 
-## Architecture
+Proof of reserves is public at `http://localhost:3000/proof-of-reserves` — no wallet connection
+required.
 
-- **Canonical Settlement:** Arc Testnet
-- **Bridges:** Circle CCTP for USDC
-- **Auth:** Injected wallet signatures
-- **Database:** Supabase PostgreSQL
-- **Frontend:** React 18 + Tailwind + Next.js
+## Architecture overview
 
-## Key Features
+Arc Testnet is the canonical settlement chain: vault, treasury, proof-of-reserves, credit-line,
+and governance contracts all live on Arc, and USDC arrives there via Circle CCTP V2 from Base
+Sepolia, Arbitrum Sepolia, Ethereum Sepolia, or OP Sepolia. The backend indexes Arc events, tracks
+CCTP attestations through a verified fetch → poll → verify → submit pipeline, and exposes a REST
+API; the frontend is a Next.js dashboard gated behind an injected-wallet session, except for the
+public proof-of-reserves page.
 
-- ✅ FIXED vaults (0% penalty, immutable unlock)
-- ✅ FLEXIBLE vaults (0.5% early withdrawal penalty)
-- ✅ Multi-chain deposits (Base, Arbitrum, Ethereum → Arc)
-- ✅ Add to vault (extend with new deposits)
-- ✅ Proof of Reserves (real-time transparency)
-- ✅ Countdown timers
-- ✅ Custom lock durations (30 mins to 12 months)
+Full write-up, contract-by-contract responsibilities, the CCTP attestation state machine, and the
+`TimeLockVault` feature surface (split vaults, oracle-gated unlocks, streaming, credit-line
+collateral) live in **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)**.
 
-## Success Criteria
+## Deployed contracts (Arc Testnet)
 
-- [ ] 500+ testnet users
-- [ ] $100k–$500k TVL
-- [ ] 100+ successful bridges
-- [ ] >95% bridge success rate
-- [ ] <5 min end-to-end vault creation
-- [ ] 95%+ test coverage
-- [ ] Zero critical bugs
+Addresses are populated post-deployment in each environment's `.env` file — no secrets or private
+keys, just contract addresses. Env var names below match `.env.example`; see that file for the
+current testnet values.
 
-## Environment Setup
+| Contract | Env var |
+| --- | --- |
+| Treasury | `ARC_TREASURY_ADDRESS` |
+| GovernanceTimelock | `ARC_GOVERNANCE_TIMELOCK_ADDRESS` |
+| TimeLockVault | `ARC_TIMELOCK_VAULT_ADDRESS` |
+| BridgeOrchestrator | `ARC_BRIDGE_ORCHESTRATOR_ADDRESS` |
+| VaultFactory | `ARC_VAULT_FACTORY_ADDRESS` |
+| ProofOfReserves | `ARC_PROOF_OF_RESERVES_ADDRESS` |
 
-See `.env.example` files in each directory.
+`CreditLine.sol`, `MockPriceOracle.sol`, and `ScheduledPayment.sol` are newer contracts deployed
+via `contracts/scripts/deploy-arc.js`; their addresses are not yet in `.env.example` as fixed env
+vars — check your local deployment output / `contracts/deployments` if present.
 
-## Documentation
+Other relevant addresses/config: `ARC_USDC`, `ARC_CHAIN_ID` (`5042002`), `ARC_CCTP_DOMAIN` (`26`),
+`CCTP_TOKEN_MESSENGER`, `CCTP_MESSAGE_TRANSMITTER`, and per-source-chain
+`*_CCTP_RECEIVER_ADDRESS` variables. See `.env.example` for the full list.
 
-- [Smart Contracts](./docs/contracts.md)
-- [Backend API](./docs/backend.md)
-- [Frontend Guide](./docs/frontend.md)
+## Implemented features
 
----
+- **Treasury (USDC)** — protocol fee collection and multisig-controlled USDC accounting
+  (`Treasury.sol`).
+- **Live proof-of-reserves** — `GET /api/proof-of-reserves` (cached/aggregated) and
+  `GET /api/proof-of-reserves/verify` (live on-chain call to
+  `ProofOfReserves.verifyLiveReserves()`, bypassing the database). Both are public, read-only, and
+  reachable without a wallet session — no auth middleware runs on either route.
+- **Split / "Smart Treasury" vaults** — a single deposit auto-allocates into savings/yield/reserve
+  buckets by basis points, each claimable independently (`TimeLockVault.depositFromBridgeSplit` /
+  `claimBucket`).
+- **Credit lines** — USDC credit lines collateralized by locked vault balances, with on-chain
+  lock/unlock/liquidate hooks between `CreditLine.sol` and `TimeLockVault.sol`.
+- **Oracle-gated unlock** — a vault claim can additionally require a price condition from a
+  configured oracle. **`MockPriceOracle.sol` is a demo mock** — see Known Limitations.
+- **Multi-condition unlock** — an oracle-price condition and a treasury-balance condition can both
+  be attached to the same vault; both must pass before claim.
+- **Streaming vaults** — a deposit can release over evenly-spaced tranches instead of a single
+  unlock, claimable incrementally as tranches mature.
+- **Hardened CCTP attestation w/ replay guard** — inbound and outbound CCTP transfers verify real
+  Circle attestations (not a relayer shortcut) before submitting to Circle's own
+  `MessageTransmitterV2`, plus an on-chain processed-message guard in `CCTPReceiver.sol` as
+  defense-in-depth. See `docs/ARCHITECTURE.md` §4 for the full flow.
+- **Scheduled payments** — `ScheduledPayment.sol` enforces due-timestamp, double-execution, and
+  balance-threshold guards on-chain; a backend cron keeper triggers execution once due (see Known
+  Limitations — this keeper is centralized).
+- **Multi-chain destination bridging** — claims can target Base Sepolia, Arbitrum Sepolia,
+  Ethereum Sepolia, or OP Sepolia as the outbound destination, not just the vault's original
+  source chain.
 
-Built with precision for testnet discipline.
+## Known limitations
 
+Read before demoing or judging — these are real, current gaps, not hedging:
+
+- **Scheduled payments use a centralized backend cron keeper**, not decentralized on-chain
+  automation. `ScheduledPayment.sol` enforces all safety invariants on-chain (due time,
+  double-execution, balance threshold), so the keeper cannot steal funds or bypass a guard — but it
+  is a single off-chain process, and a hackathon-timeline tradeoff versus something like Chainlink
+  Automation, which isn't confirmed available on Arc yet.
+- **Oracle-gated unlocks currently use `MockPriceOracle.sol`**, a demo contract with no real price
+  feed behind it. A real Arc-native oracle integration is not yet confirmed available and is
+  follow-up work, not something already wired in.
+- **Circle App Kit / Circle Wallets / Paymaster / Nanopayments are not integrated.** Wallet auth
+  today is a plain injected-wallet connection. Circle's Paymaster is not confirmed available on Arc
+  yet per Circle's own docs. These are separate, not-yet-started follow-up work, not partially
+  built.
+- **`npx hardhat test` is currently broken** under this repo's Hardhat 3 setup. Contract behavior
+  is instead verified via 9 standalone smoke scripts in `contracts/scripts/smoke-*.js`, run with
+  `npx hardhat run scripts/smoke-X.js`. See "Verifying the build" below.
+
+## Verifying the build
+
+There is no hosted demo environment in this repo checkout. To verify contract behavior locally,
+run each smoke script from `contracts/`:
+
+```bash
+cd contracts
+npx hardhat run scripts/smoke-treasury.js
+npx hardhat run scripts/smoke-proof-of-reserves.js
+npx hardhat run scripts/smoke-split-vault.js
+npx hardhat run scripts/smoke-credit-line.js
+npx hardhat run scripts/smoke-oracle-unlock.js
+npx hardhat run scripts/smoke-streaming-vault.js
+npx hardhat run scripts/smoke-cctp-receiver.js
+npx hardhat run scripts/smoke-scheduled-payment.js
+npx hardhat run scripts/smoke-multichain-claim.js
+```
+
+Each script deploys the relevant contracts to an ephemeral local Hardhat network and exercises the
+feature end to end, printing pass/fail as it goes.
+
+## Further reading
+
+- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — full architecture, contract responsibilities,
+  CCTP attestation flow, `TimeLockVault` feature surface.
+- [docs/archive/](./docs/archive/) — earlier build-status and testing-strategy documents, kept for
+  history. Numbers in those files (test counts, coverage %, completion %) are historical snapshots
+  and are **not** re-verified current claims; treat this README and `docs/ARCHITECTURE.md` as the
+  source of truth.
