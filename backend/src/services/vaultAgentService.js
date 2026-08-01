@@ -1,12 +1,24 @@
 // Autonomous vault-maintenance agent (Items 14-16). Scans TimeLockVault for vaults that have
-// delegated claim rights to this agent's Circle Wallet (CIRCLE_AGENT_WALLET_ADDRESS, set via
-// TimeLockVault.setVaultDelegate() by the vault owner) and are mature + unclaimed, then triggers
-// claimVault() as the agent using Circle's Developer-Controlled Wallets contract-execution API.
-// The agent is paid automatically on-chain via TimeLockVault's agentFeeBps mechanism (Item 15) -
-// no separate off-chain payment step is needed, the fee split happens inside claimVault() itself.
+// delegated claim rights to the agent and are mature + unclaimed, then triggers claimVault() on
+// the owner's behalf. The agent is paid automatically on-chain via TimeLockVault's agentFeeBps
+// mechanism (Item 15) - no separate off-chain payment step, the fee split happens inside
+// claimVault() itself.
+//
+// Two execution identities exist for the agent, deliberately kept separate:
+//   1. The ERC-4337 smart account (agentSmartAccountService.js) - PRIMARY path. Gas-sponsored
+//      via Pimlico's real, verified-working bundler+paymaster on Arc Testnet, so the agent
+//      never needs to hold Arc gas. Proven live: a real sponsored UserOperation was submitted
+//      and confirmed on-chain (block 54751883) with both the owner key and smart account at
+//      zero balance - the paymaster genuinely covered gas.
+//   2. The Circle Developer-Controlled Wallet (circleWalletService.js) - kept as a documented
+//      alternative path. It works but is NOT gas-sponsored: it would need to hold Arc gas
+//      itself, which it currently does not (see README known-limitations).
+// findEligibleDelegatedVaults() checks delegation against the smart account address, since
+// that's the identity vault owners should actually authorize via setVaultDelegate().
 import { ethers } from 'ethers';
 import { initiateDeveloperControlledWalletsClient } from '@circle-fin/developer-controlled-wallets';
 import { contractAddresses } from '../config/contracts.js';
+import { getAgentSmartAccountAddress, sendSponsoredCall, waitForSponsoredCall } from './agentSmartAccountService.js';
 import logger from '../config/logger.js';
 
 const TIME_LOCK_VAULT_ABI = [
@@ -29,13 +41,10 @@ function getCircleClient() {
 
 const VAULT_STATUS_ACTIVE = 0;
 
-/// Returns vaults that are: delegated to this agent, ACTIVE, mature, and not locked as
-/// CreditLine collateral - i.e. eligible for the agent to autonomously claim.
+/// Returns vaults that are: delegated to this agent's smart account, ACTIVE, mature, and not
+/// locked as CreditLine collateral - i.e. eligible for the agent to autonomously claim.
 export async function findEligibleDelegatedVaults() {
-  const agentAddress = (process.env.CIRCLE_AGENT_WALLET_ADDRESS || '').toLowerCase();
-  if (!agentAddress) {
-    throw new Error('CIRCLE_AGENT_WALLET_ADDRESS not configured');
-  }
+  const agentAddress = (await getAgentSmartAccountAddress()).toLowerCase();
 
   const provider = new ethers.JsonRpcProvider(contractAddresses.arcRpcUrl);
   const vaultContract = new ethers.Contract(contractAddresses.timeLockVault, TIME_LOCK_VAULT_ABI, provider);
@@ -62,10 +71,29 @@ export async function findEligibleDelegatedVaults() {
   return eligible;
 }
 
-/// Submits claimVault(vaultId, destinationChain) as the agent's Circle Wallet via Circle's
-/// contract-execution transaction API. Returns Circle's transaction record (async - Circle
-/// broadcasts and confirms the transaction; callers should poll transaction status).
+/// PRIMARY claim path: submits claimVault(vaultId, destinationChain) as the agent's ERC-4337
+/// smart account, gas-sponsored by Pimlico's paymaster on Arc Testnet. Waits for the
+/// UserOperation receipt and returns it (includes the underlying tx hash and success status).
 export async function executeAgentClaim(vaultId, destinationChain = 0) {
+  if (!contractAddresses.timeLockVault) {
+    throw new Error('ARC_TIMELOCK_VAULT_ADDRESS not configured');
+  }
+
+  logger.info('Agent submitting sponsored autonomous claim', { vaultId, destinationChain });
+
+  const iface = new ethers.Interface(TIME_LOCK_VAULT_ABI);
+  const data = iface.encodeFunctionData('claimVault', [vaultId, destinationChain]);
+
+  const userOpHash = await sendSponsoredCall({ to: contractAddresses.timeLockVault, data });
+  const receipt = await waitForSponsoredCall(userOpHash);
+
+  return { userOpHash, ...receipt };
+}
+
+/// ALTERNATIVE claim path via the agent's Circle Developer-Controlled Wallet. Not gas-sponsored
+/// - the wallet needs its own Arc gas, which it does not currently hold (see README known
+/// limitations). Kept for reference / as a fallback once the wallet is funded.
+export async function executeAgentClaimViaCircleWallet(vaultId, destinationChain = 0) {
   const client = getCircleClient();
   const walletId = process.env.CIRCLE_AGENT_WALLET_ID;
 
@@ -76,7 +104,7 @@ export async function executeAgentClaim(vaultId, destinationChain = 0) {
     throw new Error('ARC_TIMELOCK_VAULT_ADDRESS not configured');
   }
 
-  logger.info('Agent submitting autonomous claim', { vaultId, destinationChain });
+  logger.info('Agent submitting autonomous claim via Circle Wallet', { vaultId, destinationChain });
 
   const iface = new ethers.Interface(TIME_LOCK_VAULT_ABI);
   const callData = iface.encodeFunctionData('claimVault', [vaultId, destinationChain]);
@@ -91,8 +119,9 @@ export async function executeAgentClaim(vaultId, destinationChain = 0) {
   return resp.data;
 }
 
-/// One pass of the agent loop: find eligible vaults, claim each, log outcome. Intended to be
-/// invoked on a schedule (see scheduledPaymentService.js for the node-cron pattern this mirrors).
+/// One pass of the agent loop: find eligible vaults, claim each via the sponsored smart account
+/// path, log outcome. Intended to be invoked on a schedule (see scheduledPaymentService.js for
+/// the node-cron pattern this mirrors).
 export async function runAgentPass() {
   const eligible = await findEligibleDelegatedVaults();
   logger.info('Vault agent pass: eligible vaults found', { count: eligible.length });
@@ -100,9 +129,9 @@ export async function runAgentPass() {
   const results = [];
   for (const { vaultId, owner, totalAmount } of eligible) {
     try {
-      const tx = await executeAgentClaim(vaultId);
-      logger.info('Vault agent claim submitted', { vaultId, owner, totalAmount, txId: tx.id });
-      results.push({ vaultId, status: 'submitted', txId: tx.id });
+      const result = await executeAgentClaim(vaultId);
+      logger.info('Vault agent claim confirmed', { vaultId, owner, totalAmount, txHash: result.receipt?.transactionHash, success: result.success });
+      results.push({ vaultId, status: result.success ? 'confirmed' : 'reverted', userOpHash: result.userOpHash });
     } catch (err) {
       logger.error('Vault agent claim failed', { vaultId, error: err.message });
       results.push({ vaultId, status: 'failed', error: err.message });
