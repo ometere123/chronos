@@ -89,9 +89,16 @@ current testnet values.
 | VaultFactory | `ARC_VAULT_FACTORY_ADDRESS` |
 | ProofOfReserves | `ARC_PROOF_OF_RESERVES_ADDRESS` |
 
-`CreditLine.sol`, `MockPriceOracle.sol`, and `ScheduledPayment.sol` are newer contracts deployed
-via `contracts/scripts/deploy-arc.js`; their addresses are not yet in `.env.example` as fixed env
-vars — check your local deployment output / `contracts/deployments` if present.
+| CreditLine | `ARC_CREDIT_LINE_ADDRESS` |
+| ScheduledPayment | `ARC_SCHEDULED_PAYMENT_ADDRESS` |
+| MockPriceOracle | `ARC_MOCK_PRICE_ORACLE_ADDRESS` |
+| BandOracleAdapter | `ARC_BAND_ORACLE_ADAPTER_ADDRESS` |
+
+All nine contracts above are live on Arc Testnet as of this writing (deployed via
+`contracts/scripts/deploy-arc.js` and `contracts/scripts/deploy-band-oracle-adapter.js`). The
+suite has been redeployed several times during development as contracts changed — the `.env.local`
+values are always the current source of truth; addresses quoted in older docs/commit messages may
+be stale.
 
 Other relevant addresses/config: `ARC_USDC`, `ARC_CHAIN_ID` (`5042002`), `ARC_CCTP_DOMAIN` (`26`),
 `CCTP_TOKEN_MESSENGER`, `CCTP_MESSAGE_TRANSMITTER`, and per-source-chain
@@ -126,6 +133,32 @@ Other relevant addresses/config: `ARC_USDC`, `ARC_CHAIN_ID` (`5042002`), `ARC_CC
 - **Multi-chain destination bridging** — claims can target Base Sepolia, Arbitrum Sepolia,
   Ethereum Sepolia, or OP Sepolia as the outbound destination, not just the vault's original
   source chain.
+- **Real oracle option (Band Protocol)** — `BandOracleAdapter.sol` wraps Band Protocol's live
+  `StdReference` contract on Arc Testnet (`0x8c064bCf7C0DA3B3b090BAbFE8f3323534D84d68`, verified
+  on-chain returning a real USDC/USD rate), exposing the same `getPrice()` interface vaults expect.
+  `MockPriceOracle.sol` remains available as a fallback for demo scenarios that need a controllable
+  price.
+- **Vault-maintenance agent (autonomous claim)** — a vault owner can call
+  `TimeLockVault.setVaultDelegate(vaultId, agentAddress)` to authorize an address (e.g. the
+  agent's Circle Wallet) to trigger `claimVault()` on their behalf. Payout always goes to the
+  vault owner; the delegate cannot redirect funds. `backend/src/services/vaultAgentService.js`
+  scans for eligible delegated vaults and submits claims via Circle's Developer-Controlled Wallets
+  contract-execution API.
+- **Agent self-payment (on-chain fee split)** — when a delegate (not the owner) triggers a claim,
+  `TimeLockVault.sol` automatically pays that delegate a small, owner-settable fee (`agentFeeBps`,
+  default 0.10%, capped at 1%) out of the claimed amount, with the remainder going to the owner.
+  Owner-triggered claims are unaffected — zero fee. This gives the agent a real, on-chain payment
+  for autonomous service without needing separate off-chain payment infrastructure.
+- **Circle Developer-Controlled Wallet** — a real wallet, created and verified live on Arc Testnet
+  via Circle's sandbox API (`backend/src/services/circleWalletService.js`), backs the
+  vault-maintenance agent above.
+- **Circle App Kit** — `backend/src/services/appKitBridgeService.js` uses Circle's real `AppKit`
+  SDK (`kit.bridge()` / `kit.estimateBridge()`) to deposit USDC from a source chain into Arc.
+  Verified live: `kit.getSupportedChains()` confirms Arc Testnet is registered with full CCTP v2
+  config, and a real `estimateBridge()` call from Base Sepolia → Arc Testnet returned genuine fee
+  figures. A read-only `GET /api/bridge/appkit/supported-chains` route is exposed; the
+  estimate/execute functions require a private-key adapter and are not exposed over HTTP, since
+  CHRONOS's real user flow uses browser-injected wallets (keys never touch the backend).
 
 ## Known limitations
 
@@ -136,15 +169,24 @@ Read before demoing or judging — these are real, current gaps, not hedging:
   double-execution, balance threshold), so the keeper cannot steal funds or bypass a guard — but it
   is a single off-chain process, and a hackathon-timeline tradeoff versus something like Chainlink
   Automation, which isn't confirmed available on Arc yet.
-- **Oracle-gated unlocks currently use `MockPriceOracle.sol`**, a demo contract with no real price
-  feed behind it. A real Arc-native oracle integration is not yet confirmed available and is
-  follow-up work, not something already wired in.
-- **Circle App Kit / Circle Wallets / Paymaster / Nanopayments are not integrated.** Wallet auth
-  today is a plain injected-wallet connection. Circle's Paymaster is not confirmed available on Arc
-  yet per Circle's own docs. These are separate, not-yet-started follow-up work, not partially
-  built.
+- **Chainlink price feeds are not confirmed live on Arc Testnet.** Research found real Chainlink
+  CCIP infrastructure on Arc (router, RMN, LINK token) and a "Chainlink Scale" partnership
+  announcement, but no verifiable Data Feeds/AggregatorV3 contract address. Band Protocol was used
+  instead because it has one confirmed, on-chain-verified queryable address.
+- **Circle Paymaster is not integrated and is not usable on Arc.** Confirmed absent from Arc on
+  both Circle's marketing page and developer docs (supported chains: Arbitrum, Avalanche, Base,
+  Ethereum, Optimism, Polygon PoS, Unichain — no Arc). Not attempted.
+- **Circle Nanopayments is not integrated**, despite being confirmed real and live on Arc Testnet
+  (via Circle's own `circlefin/arc-nanopayments` sample repo). Item 15 (agent self-payment) is
+  instead implemented as a direct on-chain fee split in `TimeLockVault.claimVault()` — simpler,
+  fully on-chain, and verified — rather than the off-chain x402/Gateway batching flow Nanopayments
+  uses. Worth revisiting if a demo specifically wants to showcase Circle's Nanopayments product.
+- **The agent's Circle Wallet is unfunded** — it exists and is verified live on Arc Testnet, but
+  has not been sent testnet USDC/gas, so `vaultAgentService.executeAgentClaim()` has not been
+  exercised end-to-end against a real delegated vault (no vault has used `setVaultDelegate()` yet
+  either, since none has been created through the full deposit flow in this environment).
 - **`npx hardhat test` is currently broken** under this repo's Hardhat 3 setup. Contract behavior
-  is instead verified via 9 standalone smoke scripts in `contracts/scripts/smoke-*.js`, run with
+  is instead verified via 10 standalone smoke scripts in `contracts/scripts/smoke-*.js`, run with
   `npx hardhat run scripts/smoke-X.js`. See "Verifying the build" below.
 
 ## Verifying the build
