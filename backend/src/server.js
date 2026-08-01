@@ -11,6 +11,7 @@ import bridgeRoutes from './routes/bridge.js';
 import proofOfReservesRoutes from './routes/proofOfReserves.js';
 import usersRoutes from './routes/users.js';
 import authRoutes from './routes/auth.js';
+import userWalletRoutes from './routes/userWallet.js';
 import { eventListenerService } from './services/eventListenerService.js';
 import { bridgeTrackerService } from './services/bridgeTrackerService.js';
 import { scheduledPaymentService } from './services/scheduledPaymentService.js';
@@ -80,6 +81,7 @@ app.get('/health', (req, res) => {
 
 // API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/user-wallet', userWalletRoutes);
 app.use('/api/vaults', vaultRoutes);
 app.use('/api/bridge', bridgeRoutes);
 app.use('/api/proof-of-reserves', proofOfReservesRoutes);
