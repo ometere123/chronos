@@ -169,6 +169,15 @@ Other relevant addresses/config: `ARC_USDC`, `ARC_CHAIN_ID` (`5042002`), `ARC_CC
   figures. A read-only `GET /api/bridge/appkit/supported-chains` route is exposed; the
   estimate/execute functions require a private-key adapter and are not exposed over HTTP, since
   CHRONOS's real user flow uses browser-injected wallets (keys never touch the backend).
+- **Email OTP wallet onboarding (Circle User-Controlled Wallets)** — a second sign-up path
+  alongside the existing injected-wallet flow, not a replacement. A user enters just their email;
+  Circle issues them a real SCA (smart contract account) wallet on Arc Testnet, secured by a PIN
+  they set via Circle's own hosted UI — no seed phrase, no browser extension. Backend
+  (`backend/src/services/userWalletService.js`, `routes/userWallet.js`) wraps Circle's real
+  `@circle-fin/user-controlled-wallets` SDK; `createUser`/`createUserToken` verified working live.
+  Frontend (`frontend/hooks/useEmailWallet.ts`, `components/forms/EmailSignupModal.tsx`) drives
+  Circle's real `@circle-fin/w3s-pw-web-sdk`, which renders Circle's own hosted OTP-entry and
+  PIN-creation UI. See known limitations for the two Console-side setup steps this still needs.
 
 ## Known limitations
 
@@ -200,6 +209,17 @@ Read before demoing or judging — these are real, current gaps, not hedging:
   fresh and never funded (that's the point — Pimlico sponsors its gas), but it's still a single
   point of failure for the agent's ability to act. Production hardening would mean rotating it out
   of a plain env var into a proper key-management setup.
+- **Email OTP onboarding needs two Circle Console steps not yet completed**: (1) a
+  User-Controlled Wallets App ID (`NEXT_PUBLIC_CIRCLE_APP_ID`) for the frontend SDK to
+  initialize — confirmed via testing that no backend call needs this, only the Web SDK; (2) an
+  SMTP relay configured in Circle Console, since Circle does not deliver OTP emails itself. Until
+  both are set, the email sign-up modal shows a "not configured" message and falls back to
+  Connect Wallet — backend routes and frontend flow are otherwise fully wired and type-checked.
+- **Email-onboarded users are not yet wired to Circle Gas Station for gas sponsorship.** Their
+  SCA wallets exist on Arc Testnet, but nothing sponsors their transaction gas yet — that's a
+  separate integration from what's built (Gas Station is confirmed to support Arc Testnet per
+  earlier research, but not yet implemented here). Contrast with the agent's own wallet, which
+  has verified working Pimlico sponsorship.
 - **`npx hardhat test` is currently broken** under this repo's Hardhat 3 setup. Contract behavior
   is instead verified via 10 standalone smoke scripts in `contracts/scripts/smoke-*.js`, run with
   `npx hardhat run scripts/smoke-X.js`. See "Verifying the build" below.
