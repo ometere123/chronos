@@ -95,6 +95,13 @@ contract TimeLockVault is Ownable, ReentrancyGuard {
     address public bridgeOrchestratorAddress;
     address public creditLineAddress;
 
+    /// @notice Optional per-vault delegate the owner can authorize to call claimVault() on
+    /// their behalf (Item 14: vault-maintenance agent). Delegated claims always pay out to
+    /// vault.owner, never to msg.sender - this is claim-only authorization, not a transfer
+    /// of ownership or funds-recipient rights. Zero address (the default) == no delegate set.
+    mapping(bytes32 => address) public vaultDelegate;
+    event VaultDelegateSet(bytes32 indexed vaultId, address indexed delegate);
+
     constructor(address _treasury) {
         treasuryAddress = _treasury;
     }
@@ -109,6 +116,21 @@ contract TimeLockVault is Ownable, ReentrancyGuard {
     function setCreditLine(address _creditLine) external onlyOwner {
         require(_creditLine != address(0), "Invalid credit line");
         creditLineAddress = _creditLine;
+    }
+
+    /// @notice Vault owner authorizes (or revokes, via address(0)) an address - e.g. the
+    /// CHRONOS vault-maintenance agent's Circle Wallet - to call claimVault() on their behalf.
+    /// Payout always goes to vault.owner regardless of who calls claimVault(), so this only
+    /// grants "trigger the claim" rights, never redirects funds.
+    function setVaultDelegate(bytes32 vaultId, address delegate) external {
+        require(vaults[vaultId].owner == msg.sender, "Only owner can set delegate");
+        vaultDelegate[vaultId] = delegate;
+        emit VaultDelegateSet(vaultId, delegate);
+    }
+
+    function _isOwnerOrDelegate(Vault storage vault) internal view returns (bool) {
+        return msg.sender == vault.owner ||
+            (vaultDelegate[vault.vaultId] != address(0) && msg.sender == vaultDelegate[vault.vaultId]);
     }
 
     /// @notice Create vault from bridge deposit
@@ -449,7 +471,7 @@ contract TimeLockVault is Ownable, ReentrancyGuard {
     /// @notice Claim mature vault
     function claimVault(bytes32 vaultId, uint32 destinationChain) external nonReentrant {
         Vault storage vault = vaults[vaultId];
-        require(vault.owner == msg.sender, "Only owner can claim");
+        require(_isOwnerOrDelegate(vault), "Only owner or delegate can claim");
         require(!vaultLocked[vaultId], "Vault locked as collateral");
         require(vault.status == VaultStatus.ACTIVE, "Vault not active");
         require(vault.numTranches == 0, "Use claimStreamingTranches for streaming vaults");
@@ -462,11 +484,13 @@ contract TimeLockVault is Ownable, ReentrancyGuard {
         vault.status = VaultStatus.MATURE;
         emit VaultStatusChanged(vaultId, VaultStatus.MATURE);
 
-        require(IERC20(vault.tokenAddress).transfer(msg.sender, claimAmount), "Transfer failed");
+        // Payout always goes to vault.owner, never msg.sender - a delegate can trigger the
+        // claim but cannot redirect funds to itself.
+        require(IERC20(vault.tokenAddress).transfer(vault.owner, claimAmount), "Transfer failed");
 
         vault.status = VaultStatus.CLAIMED;
         emit VaultStatusChanged(vaultId, VaultStatus.CLAIMED);
-        emit VaultClaimed(vaultId, msg.sender, claimAmount, destinationChain);
+        emit VaultClaimed(vaultId, vault.owner, claimAmount, destinationChain);
     }
 
     /// @notice Withdraw from flexible vault (before unlock)
