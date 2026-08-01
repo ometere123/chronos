@@ -72,7 +72,12 @@ export async function createUserWallet({ userToken, accountType = 'SCA' }) {
     blockchains: [Blockchain.ArcTestnet],
     accountType,
   });
-  return resp.data;
+  // createUserPinWithWallets has an extra nesting level other methods here don't: its return
+  // type is Pin { data: PinData { challengeId } }, so resp.data is { data: { challengeId } },
+  // not { challengeId } directly. Confirmed live - without unwrapping this, the frontend's
+  // challenge.challengeId was undefined, sdk.execute(undefined, cb) silently invoked the
+  // callback with no error and no UI, and wallet creation never actually happened.
+  return resp.data.data;
 }
 
 export async function listUserWallets(userToken) {

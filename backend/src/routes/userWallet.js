@@ -104,6 +104,8 @@ router.post('/create-wallet', asyncHandler(async (req, res) => {
   }
 }));
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 // Step 4: once the wallet exists, mint a CHRONOS session JWT the same shape as the
 // injected-wallet flow issues, so downstream API routes don't need to know which auth path
 // a user came through.
@@ -114,8 +116,16 @@ router.post('/session', asyncHandler(async (req, res) => {
   }
 
   try {
-    const wallets = await listUserWallets(userToken);
-    const wallet = wallets?.[0];
+    // Right after a PIN challenge completes, Circle's backend can still be finishing wallet
+    // provisioning for a moment - an immediate listWallets() can come back empty. Confirmed live:
+    // a fresh signup's execute() succeeded but the very next listWallets() call returned []. Poll
+    // briefly instead of failing on the first empty result.
+    let wallet;
+    for (let attempt = 0; attempt < 5 && !wallet; attempt++) {
+      if (attempt > 0) await sleep(1000);
+      const wallets = await listUserWallets(userToken);
+      wallet = wallets?.[0];
+    }
     if (!wallet) {
       return res.status(404).json({ error: { message: 'No wallet found for this user' } });
     }
