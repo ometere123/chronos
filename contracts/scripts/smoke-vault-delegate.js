@@ -75,7 +75,12 @@ async function main() {
   await vault.connect(owner).setVaultDelegate(vaultId, agent.address);
   assert.equal(await vault.vaultDelegate(vaultId), agent.address, "delegate not persisted");
 
-  // Agent (delegate) can now trigger the claim; funds go to owner, not agent.
+  // Agent (delegate) can now trigger the claim; owner gets the deposit minus the agent fee,
+  // and the agent/delegate itself receives that fee (Item 15: agent self-payment).
+  const feeBps = await vault.agentFeeBps();
+  const expectedFee = (depositAmount * feeBps) / 10000n;
+  const expectedOwnerAmount = depositAmount - expectedFee;
+
   const ownerBalBefore = await usdc.balanceOf(owner.address);
   const agentBalBefore = await usdc.balanceOf(agent.address);
 
@@ -84,11 +89,30 @@ async function main() {
   const ownerBalAfter = await usdc.balanceOf(owner.address);
   const agentBalAfter = await usdc.balanceOf(agent.address);
 
-  assert.equal(ownerBalAfter - ownerBalBefore, depositAmount, "owner should receive full claim amount");
-  assert.equal(agentBalAfter - agentBalBefore, 0n, "delegate/agent should receive nothing");
+  assert.equal(ownerBalAfter - ownerBalBefore, expectedOwnerAmount, "owner should receive deposit minus agent fee");
+  assert.equal(agentBalAfter - agentBalBefore, expectedFee, "delegate/agent should receive its fee");
+  assert.ok(expectedFee > 0n, "sanity check: fee should be nonzero for this deposit size");
 
   const vaultAfter = await vault.vaults(vaultId);
   assert.equal(vaultAfter.status, 2n, "vault should be CLAIMED (status=2)");
+
+  // Owner-triggered claims (no delegate involved) still pay the full amount, no fee.
+  const latestBlock2 = await ethers.provider.getBlock("latest");
+  const unlockAt2 = latestBlock2.timestamp + 5;
+  await usdc.transfer(vault.address, depositAmount);
+  const tx2 = await vault.depositFromBridge(depositAmount, owner.address, unlockAt2, 1, 0, usdc.address, 0);
+  const receipt2 = await tx2.wait();
+  const createdEvent2 = receipt2.logs
+    .map((l) => { try { return vault.interface.parseLog(l); } catch { return null; } })
+    .find((e) => e && e.name === "VaultCreated");
+  const vaultId2 = createdEvent2.args.vaultId;
+  await ethers.provider.send("evm_increaseTime", [10]);
+  await ethers.provider.send("evm_mine", []);
+
+  const ownerBalBefore2 = await usdc.balanceOf(owner.address);
+  await vault.connect(owner).claimVault(vaultId2, 0);
+  const ownerBalAfter2 = await usdc.balanceOf(owner.address);
+  assert.equal(ownerBalAfter2 - ownerBalBefore2, depositAmount, "owner self-claim should receive full amount, no fee deducted");
 
   console.log("Vault delegate smoke test: ALL CHECKS PASSED");
 }

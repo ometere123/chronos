@@ -96,11 +96,25 @@ contract TimeLockVault is Ownable, ReentrancyGuard {
     address public creditLineAddress;
 
     /// @notice Optional per-vault delegate the owner can authorize to call claimVault() on
-    /// their behalf (Item 14: vault-maintenance agent). Delegated claims always pay out to
-    /// vault.owner, never to msg.sender - this is claim-only authorization, not a transfer
-    /// of ownership or funds-recipient rights. Zero address (the default) == no delegate set.
+    /// their behalf (Item 14: vault-maintenance agent). This is claim-only authorization, not
+    /// a transfer of ownership. The claimed amount always goes to vault.owner, EXCEPT for a
+    /// small agentFeeBps cut paid to the delegate itself when a delegate (not the owner)
+    /// triggers the claim (Item 15: agent self-payment for autonomous service) - the owner
+    /// never pays this fee unless they explicitly opted into agent management via
+    /// setVaultDelegate(). Zero delegate address (the default) == no delegate set.
     mapping(bytes32 => address) public vaultDelegate;
     event VaultDelegateSet(bytes32 indexed vaultId, address indexed delegate);
+
+    /// @notice Fee (basis points, 1 = 0.01%) paid to a delegate when it triggers a claim on the
+    /// owner's behalf. Owner-triggered claims never pay this fee. Capped low and owner-settable.
+    uint16 public agentFeeBps = 10; // 0.10% default
+    event AgentFeeBpsUpdated(uint16 newFeeBps);
+
+    function setAgentFeeBps(uint16 newFeeBps) external onlyOwner {
+        require(newFeeBps <= 100, "Agent fee capped at 1%");
+        agentFeeBps = newFeeBps;
+        emit AgentFeeBpsUpdated(newFeeBps);
+    }
 
     constructor(address _treasury) {
         treasuryAddress = _treasury;
@@ -484,9 +498,19 @@ contract TimeLockVault is Ownable, ReentrancyGuard {
         vault.status = VaultStatus.MATURE;
         emit VaultStatusChanged(vaultId, VaultStatus.MATURE);
 
-        // Payout always goes to vault.owner, never msg.sender - a delegate can trigger the
-        // claim but cannot redirect funds to itself.
-        require(IERC20(vault.tokenAddress).transfer(vault.owner, claimAmount), "Transfer failed");
+        // Owner-triggered claims: full amount to owner, no fee. Delegate-triggered claims:
+        // a small agentFeeBps cut to the delegate (Item 15), remainder to owner. A delegate
+        // can never redirect the owner's share to itself - only the capped fee.
+        if (msg.sender != vault.owner) {
+            uint256 agentFee = (claimAmount * agentFeeBps) / 10000;
+            uint256 ownerAmount = claimAmount - agentFee;
+            if (agentFee > 0) {
+                require(IERC20(vault.tokenAddress).transfer(msg.sender, agentFee), "Agent fee transfer failed");
+            }
+            require(IERC20(vault.tokenAddress).transfer(vault.owner, ownerAmount), "Transfer failed");
+        } else {
+            require(IERC20(vault.tokenAddress).transfer(vault.owner, claimAmount), "Transfer failed");
+        }
 
         vault.status = VaultStatus.CLAIMED;
         emit VaultStatusChanged(vaultId, VaultStatus.CLAIMED);
