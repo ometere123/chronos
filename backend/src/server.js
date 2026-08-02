@@ -49,6 +49,10 @@ process.on('uncaughtException', (err) => {
   });
 });
 
+// Trust the first hop reverse proxy (Railway, Vercel, etc.) so express-rate-limit reads the real
+// client IP from X-Forwarded-For instead of throwing ERR_ERL_UNEXPECTED_X_FORWARDED_FOR.
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 app.use(cors({
