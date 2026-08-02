@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { ethers } from 'ethers';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { verifyPrivyTokenAndGetWallet } from '../services/privyService.js';
 import logger from '../config/logger.js';
 
 const router = express.Router();
@@ -96,6 +97,37 @@ router.post('/verify', asyncHandler(async (req, res) => {
     address,
     authProvider: 'injected-wallet',
   });
+}));
+
+// Privy session: verifies the access token Privy's client SDK issued after a successful login
+// (external wallet connect OR embedded email/social login - Privy handles both, unlike the old
+// separate injected-wallet + Circle-email-OTP paths), then issues our own CHRONOS session JWT
+// in the same shape /auth/verify does, so downstream routes don't care which login path a user
+// came through.
+router.post('/privy-session', asyncHandler(async (req, res) => {
+  const { accessToken } = req.body;
+  if (!accessToken) {
+    return res.status(400).json({ error: { message: 'accessToken is required' } });
+  }
+
+  try {
+    const { address, privyUserId } = await verifyPrivyTokenAndGetWallet(accessToken);
+
+    const token = jwt.sign(
+      {
+        sub: `privy:${privyUserId}`,
+        address,
+        authProvider: 'privy',
+      },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({ token, address, authProvider: 'privy' });
+  } catch (err) {
+    logger.error('Privy session verification failed', { error: err.message });
+    res.status(401).json({ error: { message: 'Invalid Privy session' } });
+  }
 }));
 
 export default router;

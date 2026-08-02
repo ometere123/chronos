@@ -4,15 +4,15 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { useInjectedWallet } from '@/hooks/useInjectedWallet';
+import { useWallet } from '@/hooks/useWallet';
 
 export default function Header() {
-  const { address, isConnected, isLoading, connect, disconnect } = useInjectedWallet();
+  const { address, isConnected, isLoading, connect, disconnect } = useWallet();
   const router = useRouter();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
-  const handleLogout = () => {
-    disconnect();
+  const handleLogout = async () => {
+    await disconnect();
     router.push('/');
   };
 

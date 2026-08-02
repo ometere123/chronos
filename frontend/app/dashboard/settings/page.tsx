@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useInjectedWallet } from '@/hooks/useInjectedWallet';
+import { useWallet } from '@/hooks/useWallet';
 import { useThemeStore } from '@/store/themeStore';
 
 export default function SettingsPage() {
-  const { address, disconnect } = useInjectedWallet();
+  const { address, disconnect } = useWallet();
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const theme = useThemeStore((state) => state.theme);
   const toggleTheme = useThemeStore((state) => state.toggleTheme);

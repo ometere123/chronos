@@ -1,11 +1,10 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect } from 'react';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
-import EmailSignupModal from '@/components/forms/EmailSignupModal';
-import { useInjectedWallet } from '@/hooks/useInjectedWallet';
+import { useWallet } from '@/hooks/useWallet';
 import {
   BridgeIcon,
   ChartIcon,
@@ -17,16 +16,23 @@ import {
 } from '@/components/ui/Icons';
 
 export default function Home() {
-  const { isConnected, connect } = useInjectedWallet();
+  const { isConnected, connect } = useWallet();
   const router = useRouter();
-  const [showEmailSignup, setShowEmailSignup] = useState(false);
 
-  const handleGetStarted = async () => {
+  // Privy's connect() opens a modal and returns immediately - it doesn't await full login
+  // completion the way the old direct SIWE flow did. Navigate once the session actually
+  // finishes (isConnected flips true), rather than right after the modal opens.
+  useEffect(() => {
+    if (isConnected) {
+      router.push('/dashboard');
+    }
+  }, [isConnected, router]);
+
+  const handleGetStarted = () => {
     if (isConnected) {
       router.push('/dashboard');
     } else {
-      await connect();
-      router.push('/dashboard');
+      connect();
     }
   };
 
@@ -69,17 +75,6 @@ export default function Home() {
                 Learn More
               </a>
             </div>
-
-            {!isConnected && (
-              <button
-                onClick={() => setShowEmailSignup(true)}
-                className="text-light/60 hover:text-light text-sm underline underline-offset-4 mb-16"
-              >
-                No wallet? Sign up with email instead
-              </button>
-            )}
-
-            <EmailSignupModal open={showEmailSignup} onClose={() => setShowEmailSignup(false)} />
 
             {/* Stats */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 mt-20">

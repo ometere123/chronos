@@ -26,6 +26,7 @@
     "@circle-fin/app-kit": "^1.11.0",
     "@circle-fin/developer-controlled-wallets": "^10.8.0",
     "@circle-fin/user-controlled-wallets": "^10.8.0",
+    "@privy-io/server-auth": "^1.32.5",
     "@supabase/supabase-js": "^2.38.0",
     "axios": "^1.6.0",
     "cors": "^2.8.5",

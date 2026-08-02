@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { BridgeTransaction } from '@/types';
 import { ARC_CHAIN_ID, CHAINS, getChainName } from '@/config/chains';
-import { useInjectedWallet } from '@/hooks/useInjectedWallet';
+import { useWallet } from '@/hooks/useWallet';
 import apiClient from '@/services/api';
 import { toCamelCaseBridgeTx } from '@/services/vaultService';
 
@@ -241,7 +241,7 @@ function getProofTone(proof: TransactionProof) {
 }
 
 export default function ActivityPage() {
-  const { address } = useInjectedWallet();
+  const { address } = useWallet();
   const [filterStatus, setFilterStatus] = useState<'all' | 'PENDING' | 'COMPLETE' | 'FAILED'>('all');
   const [filterActivity, setFilterActivity] = useState<'all' | ActivityKind>('all');
 

@@ -6,11 +6,11 @@ import { vaultService } from '@/services/vaultService';
 import VaultCard from '@/components/ui/VaultCard';
 import { Vault } from '@/types';
 import { useState } from 'react';
-import { useInjectedWallet } from '@/hooks/useInjectedWallet';
+import { useWallet } from '@/hooks/useWallet';
 import { PlusIcon } from '@/components/ui/Icons';
 
 export default function DashboardPage() {
-  const { address } = useInjectedWallet();
+  const { address } = useWallet();
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'mature' | 'claimed'>('all');
 
   const { data: vaults = [], isLoading, error } = useQuery({
