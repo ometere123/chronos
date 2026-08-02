@@ -18,6 +18,19 @@ const TIMELOCK_VAULT_ABI = [
   'event FlexibleWithdrawal(bytes32 indexed vaultId, address indexed owner, uint256 amount, uint256 penalty)',
 ];
 
+// Used only by settleVaultAdvanced/settleSplitVault/settleStreamingVault's temporary-orchestrator-
+// swap path (Items 3/5/6/7: split vaults, oracle-gated unlock, streaming/tranche vaults).
+// depositFromBridgeAdvanced/depositFromBridgeSplit/setBridgeOrchestrator/owner are not part of the
+// plain BridgeOrchestrator-relayed flow above, hence a separate minimal ABI + separate write contract.
+const TIMELOCK_VAULT_ADVANCED_ABI = [
+  'function owner() view returns (address)',
+  'function bridgeOrchestratorAddress() view returns (address)',
+  'function setBridgeOrchestrator(address _orchestrator) external',
+  'function depositFromBridgeAdvanced((uint256 amount,address owner,uint256 unlockAt,uint32 sourceChain,uint8 bridgeProtocol,address tokenAddress,uint8 vaultType,address conditionOracle,uint256 conditionThreshold,bool conditionAbove,address treasuryBalanceCheck,uint256 treasuryBalanceThreshold,uint32 numTranches,uint256 intervalSeconds) params) external returns (bytes32)',
+  'function depositFromBridgeSplit((uint256 amount,address owner,uint256 unlockAt,uint32 sourceChain,uint8 bridgeProtocol,address tokenAddress,uint8 vaultType,uint16 savingsBps,uint16 yieldBps,uint16 reserveBps) params) external returns (bytes32)',
+  'event VaultCreated(bytes32 indexed vaultId, address indexed owner, uint256 totalAmount, uint256 unlockAt)',
+];
+
 const ERC20_ABI = [
   'function balanceOf(address owner) view returns (uint256)',
   'function transfer(address to, uint256 amount) returns (bool)',
@@ -88,7 +101,20 @@ function isRetryableRpcSendError(err) {
     /txpool is full/i.test(message) ||
     /replacement transaction underpriced/i.test(message) ||
     /already known/i.test(message) ||
-    /could not coalesce error/i.test(message)
+    /could not coalesce error/i.test(message) ||
+    // Arc/testnet RPC endpoints have shown real, repeated transient unresponsiveness during
+    // live testing (timeouts on plain reads, not just sends) - treat generic timeout/network
+    // errors as retryable too rather than failing a whole request on one slow RPC round-trip.
+    err?.code === 'TIMEOUT' ||
+    err?.code === 'NETWORK_ERROR' ||
+    /timeout/i.test(message) ||
+    /timed out/i.test(message) ||
+    /ETIMEDOUT|ECONNRESET|ECONNREFUSED/i.test(message) ||
+    // Discovered live: Arc's rate-limited RPC gateway sometimes returns an empty/malformed
+    // response under load instead of a proper rate-limit error, surfaced by ethers as "missing
+    // revert data" on calls that succeed moments later on retry - indistinguishable from a
+    // genuine missing-function revert except for being intermittent under load.
+    /missing revert data/i.test(message)
   );
 }
 
@@ -139,6 +165,9 @@ export class ArcSettlementService {
       : null;
     this.timeLockVaultContract = contractAddresses.timeLockVault && this.provider
       ? new ethers.Contract(contractAddresses.timeLockVault, TIMELOCK_VAULT_ABI, this.provider)
+      : null;
+    this.timeLockVaultAdvancedContract = contractAddresses.timeLockVault && this.wallet
+      ? new ethers.Contract(contractAddresses.timeLockVault, TIMELOCK_VAULT_ADVANCED_ABI, this.wallet)
       : null;
     this.usdcContract = contractAddresses.usdc && this.provider
       ? new ethers.Contract(contractAddresses.usdc, ERC20_ABI, this.provider)
@@ -191,6 +220,42 @@ export class ArcSettlementService {
 
         const waitMs = attempt * 2000;
         logger.warn(`${label} hit a retryable Arc RPC error, retrying`, {
+          attempt,
+          maxAttempts,
+          waitMs,
+          error: err.message,
+        });
+
+        await sleep(waitMs);
+      }
+    }
+
+    throw lastError;
+  }
+
+  // Plain read calls (getTransaction, getTransactionReceipt, contract .getVault() etc.) have no
+  // nonce/queue concerns like sends do, but the same transient RPC hiccups (e.g. "could not
+  // coalesce error") can hit them too - discovered live when a flexible-withdrawal sync request
+  // 500'd on a single flaky eth_getTransaction call even though the on-chain withdrawal had
+  // already succeeded. Retries a handful of times on the same retryable-error patterns as sends,
+  // without touching the write queue or nonce-reset logic that sendWithRetry needs.
+  async readWithRetry(readFn, label, maxAttempts = 3) {
+    let attempt = 0;
+    let lastError = null;
+
+    while (attempt < maxAttempts) {
+      try {
+        return await readFn();
+      } catch (err) {
+        lastError = err;
+        attempt += 1;
+
+        if (!isRetryableRpcSendError(err) || attempt >= maxAttempts) {
+          throw err;
+        }
+
+        const waitMs = attempt * 1500;
+        logger.warn(`${label} hit a retryable Arc RPC error on read, retrying`, {
           attempt,
           maxAttempts,
           waitMs,
@@ -485,6 +550,311 @@ export class ArcSettlementService {
     };
   }
 
+  // Shared write path for split vaults (Item 3), streaming/tranche vaults (Item 7), and
+  // oracle-gated/treasury-guard conditioned vaults (Items 5/6). All three call
+  // TimeLockVault.depositFromBridgeSplit/depositFromBridgeAdvanced directly with the relayer
+  // wallet - discovered live that only the address configured as bridgeOrchestratorAddress on
+  // TimeLockVault may call these, so the relayer temporarily swaps itself in as the orchestrator,
+  // submits the deposit, then always swaps the real BridgeOrchestrator back (even on failure) so
+  // the normal CCTP-relayed settleVault() path keeps working. Documented hackathon-timeline
+  // tradeoff until BridgeOrchestrator itself exposes these passthroughs.
+  async withOrchestratorSwappedIn(label, task) {
+    if (!this.timeLockVaultAdvancedContract) {
+      throw new Error('Arc TimeLockVault advanced-deposit path is not configured. Missing ARC RPC, PRIVATE_KEY, or ARC_TIMELOCK_VAULT address.');
+    }
+
+    const relayerAddress = await this.wallet.getAddress();
+    const onChainOwner = await this.timeLockVaultAdvancedContract.owner();
+    if (onChainOwner.toLowerCase() !== relayerAddress.toLowerCase()) {
+      throw new Error(`Backend relayer wallet is not the TimeLockVault owner; cannot create a ${label} without a contract change.`);
+    }
+
+    try {
+      await this.sendAndWaitWithRetry(
+        () => this.timeLockVaultAdvancedContract.setBridgeOrchestrator(relayerAddress),
+        `TimeLockVault orchestrator swap-in (${label})`
+      );
+
+      return await task(relayerAddress);
+    } finally {
+      await this.sendAndWaitWithRetry(
+        () => this.timeLockVaultAdvancedContract.setBridgeOrchestrator(this.orchestratorAddress),
+        `TimeLockVault orchestrator swap-out (${label})`
+      );
+    }
+  }
+
+  async settleSplitVault({
+    amount,
+    sourceChain,
+    destinationChain,
+    owner,
+    unlockAt,
+    vaultType,
+    savingsBps,
+    yieldBps,
+    reserveBps,
+  }) {
+    await this.ensureRelayerConfigured();
+
+    if ((Number(savingsBps) + Number(yieldBps) + Number(reserveBps)) !== 10000) {
+      throw new Error('Split bps must sum to 10000');
+    }
+
+    const amountInUnits = ethers.parseUnits(String(amount), 6);
+    const sourceChainId = toContractChainId(sourceChain);
+    const vaultTypeCode = VAULT_TYPE_CODES[vaultType];
+
+    if (typeof vaultTypeCode !== 'number') {
+      throw new Error(`Unsupported vault type for on-chain settlement: ${vaultType}`);
+    }
+
+    const ownerAddress = ethers.getAddress(owner);
+    const unlockTimestamp = toUnlockTimestamp(unlockAt);
+
+    logger.info('Submitting Arc split-vault settlement (temporary orchestrator swap)', {
+      ownerAddress,
+      amount,
+      sourceChain,
+      destinationChain,
+      unlockTimestamp,
+      vaultType,
+      savingsBps,
+      yieldBps,
+      reserveBps,
+    });
+
+    let onChainVaultId = null;
+    let depositTxHash = null;
+
+    await this.withOrchestratorSwappedIn('split vault', async (relayerAddress) => {
+      const { tx: depositTx, receipt } = await this.sendAndWaitWithRetry(
+        () => this.timeLockVaultAdvancedContract.depositFromBridgeSplit({
+          amount: amountInUnits,
+          owner: ownerAddress,
+          unlockAt: unlockTimestamp,
+          sourceChain: sourceChainId,
+          bridgeProtocol: 0,
+          tokenAddress: contractAddresses.usdc,
+          vaultType: vaultTypeCode,
+          savingsBps,
+          yieldBps,
+          reserveBps,
+        }),
+        'Arc split-vault settlement'
+      );
+      depositTxHash = depositTx.hash;
+
+      const iface = new ethers.Interface(TIMELOCK_VAULT_ADVANCED_ABI);
+      for (const log of receipt.logs) {
+        try {
+          const parsed = iface.parseLog(log);
+          if (parsed?.name === 'VaultCreated') {
+            onChainVaultId = parsed.args.vaultId;
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      return relayerAddress;
+    });
+
+    if (!onChainVaultId) {
+      throw new Error('Arc split-vault settlement succeeded but vault ID could not be read from the receipt.');
+    }
+
+    return {
+      onChainVaultId,
+      settlementTxHash: depositTxHash,
+      relayerAddress: await this.wallet.getAddress(),
+    };
+  }
+
+  async settleStreamingVault({
+    amount,
+    sourceChain,
+    destinationChain,
+    owner,
+    unlockAt,
+    vaultType,
+    numTranches,
+    intervalSeconds,
+  }) {
+    await this.ensureRelayerConfigured();
+
+    const amountInUnits = ethers.parseUnits(String(amount), 6);
+    const sourceChainId = toContractChainId(sourceChain);
+    const vaultTypeCode = VAULT_TYPE_CODES[vaultType];
+
+    if (typeof vaultTypeCode !== 'number') {
+      throw new Error(`Unsupported vault type for on-chain settlement: ${vaultType}`);
+    }
+
+    const ownerAddress = ethers.getAddress(owner);
+    const unlockTimestamp = toUnlockTimestamp(unlockAt);
+
+    logger.info('Submitting Arc streaming-vault settlement (temporary orchestrator swap)', {
+      ownerAddress,
+      amount,
+      sourceChain,
+      destinationChain,
+      unlockTimestamp,
+      vaultType,
+      numTranches,
+      intervalSeconds,
+    });
+
+    let onChainVaultId = null;
+    let depositTxHash = null;
+
+    await this.withOrchestratorSwappedIn('streaming vault', async () => {
+      const { tx: depositTx, receipt } = await this.sendAndWaitWithRetry(
+        () => this.timeLockVaultAdvancedContract.depositFromBridgeAdvanced({
+          amount: amountInUnits,
+          owner: ownerAddress,
+          unlockAt: unlockTimestamp,
+          sourceChain: sourceChainId,
+          bridgeProtocol: 0,
+          tokenAddress: contractAddresses.usdc,
+          vaultType: vaultTypeCode,
+          conditionOracle: ethers.ZeroAddress,
+          conditionThreshold: 0,
+          conditionAbove: false,
+          treasuryBalanceCheck: ethers.ZeroAddress,
+          treasuryBalanceThreshold: 0,
+          numTranches,
+          intervalSeconds,
+        }),
+        'Arc streaming-vault settlement'
+      );
+      depositTxHash = depositTx.hash;
+
+      const iface = new ethers.Interface(TIMELOCK_VAULT_ADVANCED_ABI);
+      for (const log of receipt.logs) {
+        try {
+          const parsed = iface.parseLog(log);
+          if (parsed?.name === 'VaultCreated') {
+            onChainVaultId = parsed.args.vaultId;
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+    });
+
+    if (!onChainVaultId) {
+      throw new Error('Arc streaming-vault settlement succeeded but vault ID could not be read from the receipt.');
+    }
+
+    return {
+      onChainVaultId,
+      settlementTxHash: depositTxHash,
+      relayerAddress: await this.wallet.getAddress(),
+    };
+  }
+
+  async settleVaultAdvanced({
+    amount,
+    sourceChain,
+    destinationChain,
+    owner,
+    unlockAt,
+    vaultType,
+    conditionOracle,
+    conditionThreshold,
+    conditionAbove,
+    treasuryBalanceCheck,
+    treasuryBalanceThreshold,
+  }) {
+    await this.ensureRelayerConfigured();
+
+    const amountInUnits = ethers.parseUnits(String(amount), 6);
+    const sourceChainId = toContractChainId(sourceChain);
+    const vaultTypeCode = VAULT_TYPE_CODES[vaultType];
+
+    if (typeof vaultTypeCode !== 'number') {
+      throw new Error(`Unsupported vault type for on-chain settlement: ${vaultType}`);
+    }
+
+    const ownerAddress = ethers.getAddress(owner);
+    const unlockTimestamp = toUnlockTimestamp(unlockAt);
+
+    // treasuryBalanceThreshold is compared on-chain against Treasury.getUsdcBalance(), which is
+    // USDC's native 6 decimals. conditionThreshold is compared against the chosen oracle's raw
+    // getPrice() return value (MockPriceOracle: whatever units setPrice() was called with;
+    // BandOracleAdapter: 18-decimal StdReference rate) - left as a raw integer since there's no
+    // single decimal convention across oracle choices.
+    const treasuryBalanceThresholdUnits = treasuryBalanceCheck
+      ? ethers.parseUnits(String(treasuryBalanceThreshold || 0), 6)
+      : 0n;
+    const conditionThresholdUnits = conditionOracle ? BigInt(conditionThreshold || 0) : 0n;
+
+    logger.info('Submitting Arc conditioned vault settlement (temporary orchestrator swap)', {
+      ownerAddress,
+      amount,
+      sourceChain,
+      unlockTimestamp,
+      vaultType,
+      conditionOracle,
+      conditionThreshold: conditionThreshold?.toString?.() ?? conditionThreshold,
+      conditionAbove,
+      treasuryBalanceCheck,
+      treasuryBalanceThreshold: treasuryBalanceThreshold?.toString?.() ?? treasuryBalanceThreshold,
+    });
+
+    let onChainVaultId = null;
+    let depositTxHash = null;
+
+    await this.withOrchestratorSwappedIn('conditioned vault', async () => {
+      const { tx: depositTx, receipt } = await this.sendAndWaitWithRetry(
+        () => this.timeLockVaultAdvancedContract.depositFromBridgeAdvanced({
+          amount: amountInUnits,
+          owner: ownerAddress,
+          unlockAt: unlockTimestamp,
+          sourceChain: sourceChainId,
+          bridgeProtocol: 0,
+          tokenAddress: contractAddresses.usdc,
+          vaultType: vaultTypeCode,
+          conditionOracle: conditionOracle || ethers.ZeroAddress,
+          conditionThreshold: conditionThresholdUnits,
+          conditionAbove: Boolean(conditionAbove),
+          treasuryBalanceCheck: treasuryBalanceCheck || ethers.ZeroAddress,
+          treasuryBalanceThreshold: treasuryBalanceThresholdUnits,
+          numTranches: 0,
+          intervalSeconds: 0,
+        }),
+        'Arc conditioned vault settlement'
+      );
+      depositTxHash = depositTx.hash;
+
+      const iface = new ethers.Interface(TIMELOCK_VAULT_ADVANCED_ABI);
+      for (const log of receipt.logs) {
+        try {
+          const parsed = iface.parseLog(log);
+          if (parsed?.name === 'VaultCreated') {
+            onChainVaultId = parsed.args.vaultId;
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+    });
+
+    if (!onChainVaultId) {
+      throw new Error('Arc conditioned settlement succeeded but vault ID could not be read from the receipt.');
+    }
+
+    return {
+      onChainVaultId,
+      settlementTxHash: depositTxHash,
+      relayerAddress: await this.wallet.getAddress(),
+    };
+  }
+
   async settleAdditionalDeposit({
     vaultId,
     amount,
@@ -541,7 +911,10 @@ export class ArcSettlementService {
       throw new Error('Arc TimeLockVault is not configured. Missing ARC_TIMELOCK_VAULT address or ARC RPC.');
     }
 
-    const vault = await this.timeLockVaultContract.getVault(vaultId);
+    const vault = await this.readWithRetry(
+      () => this.timeLockVaultContract.getVault(vaultId),
+      'getOnChainVault'
+    );
     const statusCode = Number(vault.status);
 
     return {
@@ -618,7 +991,15 @@ export class ArcSettlementService {
       throw new Error('Arc withdrawal verification is not configured. Missing ARC RPC or TimeLockVault address.');
     }
 
-    const tx = await this.provider.getTransaction(withdrawTxHash);
+    // Discovered live that this specific verification path (plain reads right after a fresh
+    // wallet-submitted tx) is the flakiest RPC path in the app - it 500'd repeatedly even with
+    // readWithRetry's default budget while the underlying withdrawFlexible tx had already
+    // succeeded on-chain both times. Give it a larger retry budget than other reads get.
+    const tx = await this.readWithRetry(
+      () => this.provider.getTransaction(withdrawTxHash),
+      'Flexible withdrawal getTransaction',
+      6
+    );
     if (!tx) {
       throw new Error('Withdrawal transaction was not found on Arc yet. Wait for confirmation and retry.');
     }
@@ -627,7 +1008,11 @@ export class ArcSettlementService {
       throw new Error('Withdrawal transaction was not sent to the configured Arc TimeLockVault contract.');
     }
 
-    const receipt = await this.provider.getTransactionReceipt(withdrawTxHash);
+    const receipt = await this.readWithRetry(
+      () => this.provider.getTransactionReceipt(withdrawTxHash),
+      'Flexible withdrawal getTransactionReceipt',
+      6
+    );
     if (!receipt || receipt.status !== 1) {
       throw new Error('Withdrawal transaction did not succeed on Arc.');
     }
@@ -690,7 +1075,10 @@ export class ArcSettlementService {
       throw new Error('Arc claim verification is not configured. Missing ARC RPC or TimeLockVault address.');
     }
 
-    const tx = await this.provider.getTransaction(claimTxHash);
+    const tx = await this.readWithRetry(
+      () => this.provider.getTransaction(claimTxHash),
+      'Claim getTransaction'
+    );
     if (!tx) {
       throw new Error('Claim transaction was not found on Arc yet. Wait for confirmation and retry.');
     }
@@ -699,7 +1087,10 @@ export class ArcSettlementService {
       throw new Error('Claim transaction was not sent to the configured Arc TimeLockVault contract.');
     }
 
-    const receipt = await this.provider.getTransactionReceipt(claimTxHash);
+    const receipt = await this.readWithRetry(
+      () => this.provider.getTransactionReceipt(claimTxHash),
+      'Claim getTransactionReceipt'
+    );
     if (!receipt || receipt.status !== 1) {
       throw new Error('Claim transaction did not succeed on Arc.');
     }

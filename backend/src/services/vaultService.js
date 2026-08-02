@@ -105,6 +105,110 @@ export const vaultService = {
     }
   },
 
+  // Create a new streaming/tranche vault (deposit released over N equal tranches)
+  async createStreamingVault(
+    vaultId,
+    owner,
+    totalAmount,
+    createdAt,
+    unlockAt,
+    sourceChain,
+    destinationChain,
+    bridgeProtocol,
+    tokenAddress,
+    vaultType,
+    streamingConfig,
+    createdOnChainTx = null
+  ) {
+    const { numTranches, intervalSeconds } = streamingConfig || {};
+    if (!numTranches || numTranches < 2) {
+      throw new Error('numTranches must be >= 2 for a streaming vault');
+    }
+    if (!intervalSeconds || intervalSeconds <= 0) {
+      throw new Error('intervalSeconds must be > 0 for a streaming vault');
+    }
+
+    try {
+      const result = await pool.query(
+        `INSERT INTO vaults (
+           vault_id, owner_address, total_amount, created_at, unlock_at, source_chain,
+           destination_chain, bridge_protocol, token_address, vault_type, status,
+           created_on_chain_tx, is_streaming, num_tranches, claimed_tranches, interval_seconds
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, TRUE, $13, 0, $14)
+         RETURNING *`,
+        [
+          vaultId, owner, totalAmount, createdAt, unlockAt, sourceChain, destinationChain,
+          bridgeProtocol, tokenAddress, vaultType, 'ACTIVE', createdOnChainTx,
+          numTranches, intervalSeconds,
+        ]
+      );
+      return result.rows[0];
+    } catch (err) {
+      logger.error('Error creating streaming vault', { error: err.message, vaultId });
+      throw err;
+    }
+  },
+
+  // Sync claimed tranche count (and optionally status) after an on-chain claimStreamingTranches() tx
+  async syncClaimedTranches(vaultId, claimedTranches, totalAmount = null, status = null) {
+    try {
+      const result = await pool.query(
+        `UPDATE vaults
+         SET claimed_tranches = $1,
+             total_amount = COALESCE($2, total_amount),
+             status = COALESCE($3, status),
+             claimed_at = CASE WHEN COALESCE($3, status) = 'CLAIMED' THEN COALESCE(claimed_at, NOW()) ELSE claimed_at END
+         WHERE vault_id = $4
+         RETURNING *`,
+        [claimedTranches, totalAmount, status, vaultId]
+      );
+      return result.rows[0];
+    } catch (err) {
+      logger.error('Error syncing claimed tranches', { error: err.message, vaultId, claimedTranches });
+      throw err;
+    }
+  },
+
+  // Get streaming schedule details (per-tranche amount, matured count, claimed count) for a vault
+  getStreamingAllocation(vault) {
+    if (!vault || !vault.is_streaming) {
+      return null;
+    }
+
+    const total = parseFloat(vault.total_amount);
+    const numTranches = vault.num_tranches;
+    const intervalSeconds = vault.interval_seconds;
+    const perTranche = total / numTranches;
+    const createdAtMs = new Date(vault.created_at).getTime();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const createdAtSeconds = Math.floor(createdAtMs / 1000);
+    const elapsed = Math.max(nowSeconds - createdAtSeconds, 0);
+    const maturedTranches = Math.min(Math.floor(elapsed / intervalSeconds), numTranches);
+
+    const tranches = Array.from({ length: numTranches }, (_, i) => {
+      const trancheAmount = i === numTranches - 1
+        ? total - perTranche * (numTranches - 1)
+        : perTranche;
+      return {
+        index: i,
+        amount: trancheAmount,
+        maturesAt: createdAtSeconds + (i + 1) * intervalSeconds,
+        matured: i < maturedTranches,
+        claimed: i < vault.claimed_tranches,
+      };
+    });
+
+    return {
+      numTranches,
+      intervalSeconds,
+      claimedTranches: vault.claimed_tranches,
+      maturedTranches,
+      perTranche,
+      tranches,
+    };
+  },
+
   // Get split config + bucket amounts/claim status for a vault
   getSplitAllocation(vault, usdcDecimalsAmount = null) {
     if (!vault || !vault.is_split) {
@@ -212,11 +316,13 @@ export const vaultService = {
   // Update vault status
   async updateVaultStatus(vaultId, status, claimedTxHash = null) {
     try {
-      const query = claimedTxHash
-        ? 'UPDATE vaults SET status = $1, claimed_tx_hash = $2, claimed_at = NOW() WHERE vault_id = $3 RETURNING *'
-        : 'UPDATE vaults SET status = $1 WHERE vault_id = $2 RETURNING *';
-
-      const params = claimedTxHash ? [status, claimedTxHash, vaultId] : [status, vaultId];
+      const query = `UPDATE vaults
+        SET status = $1,
+            claimed_tx_hash = COALESCE($2, claimed_tx_hash),
+            claimed_at = CASE WHEN $4 = 'CLAIMED' THEN COALESCE(claimed_at, NOW()) ELSE claimed_at END
+        WHERE vault_id = $3
+        RETURNING *`;
+      const params = [status, claimedTxHash, vaultId, status];
       const result = await pool.query(query, params);
       return result.rows[0];
     } catch (err) {

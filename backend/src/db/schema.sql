@@ -46,6 +46,15 @@ ALTER TABLE vaults ADD COLUMN IF NOT EXISTS reserve_claimed BOOLEAN NOT NULL DEF
 
 CREATE INDEX IF NOT EXISTS idx_vaults_is_split ON vaults(is_split);
 
+-- Streaming/tranche vaults: optional deposit-time schedule releasing the deposit over N equal
+-- tranches at a fixed interval. Mirrors TimeLockVault.sol's numTranches/claimedTranches/intervalSeconds.
+ALTER TABLE vaults ADD COLUMN IF NOT EXISTS is_streaming BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE vaults ADD COLUMN IF NOT EXISTS num_tranches INTEGER;
+ALTER TABLE vaults ADD COLUMN IF NOT EXISTS claimed_tranches INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE vaults ADD COLUMN IF NOT EXISTS interval_seconds INTEGER;
+
+CREATE INDEX IF NOT EXISTS idx_vaults_is_streaming ON vaults(is_streaming);
+
 -- Create vault deposits table
 CREATE TABLE IF NOT EXISTS vault_deposits (
     id BIGSERIAL PRIMARY KEY,
@@ -122,3 +131,22 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_address);
 CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);
+
+-- Durable idempotency marker for on-chain vault settlement, written IMMEDIATELY after a
+-- settleVault/settleSplitVault/settleStreamingVault/settleVaultAdvanced call succeeds on-chain,
+-- BEFORE the vaults-table insert. Deliberately has NO foreign key to vaults - discovered live
+-- that a DB-only failure after a successful on-chain settlement (e.g. a missing column) let a
+-- retry re-run the entire on-chain settlement for the same burn tx, creating a second real
+-- on-chain vault backed by the same single CCTP-bridged deposit and under-collateralizing the
+-- protocol. This table lets a retry finish the interrupted DB write instead of re-settling.
+CREATE TABLE IF NOT EXISTS vault_creation_settlements (
+    source_tx_hash VARCHAR(255) PRIMARY KEY,
+    on_chain_vault_id VARCHAR(255) NOT NULL,
+    settlement_tx_hash VARCHAR(255),
+    relayer_address VARCHAR(255),
+    params JSONB NOT NULL,
+    vault_persisted BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_vault_creation_settlements_vault_id ON vault_creation_settlements(on_chain_vault_id);

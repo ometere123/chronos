@@ -82,6 +82,112 @@ function getCreateLockKey(sourceTxHash) {
   return String(sourceTxHash || '').toLowerCase();
 }
 
+// Idempotency marker written immediately after a settleVault/settleSplitVault/
+// settleStreamingVault/settleVaultAdvanced call succeeds on-chain, BEFORE the vaults-table
+// insert. See schema.sql's vault_creation_settlements comment for the incident this closes:
+// a DB-only failure after successful on-chain settlement let a retry re-run settlement for the
+// same burn tx, creating a second real on-chain vault backed by the same single bridged deposit.
+async function recordPendingSettlement(sourceTxHash, { onChainVaultId, settlementTxHash, relayerAddress, params }) {
+  await pool.query(
+    `INSERT INTO vault_creation_settlements (source_tx_hash, on_chain_vault_id, settlement_tx_hash, relayer_address, params, vault_persisted)
+     VALUES ($1, $2, $3, $4, $5, FALSE)
+     ON CONFLICT (source_tx_hash) DO NOTHING`,
+    [sourceTxHash, onChainVaultId, settlementTxHash || null, relayerAddress || null, JSON.stringify(params)]
+  );
+}
+
+async function markSettlementPersisted(sourceTxHash) {
+  await pool.query(
+    `UPDATE vault_creation_settlements SET vault_persisted = TRUE WHERE source_tx_hash = $1`,
+    [sourceTxHash]
+  );
+}
+
+async function getPendingSettlement(sourceTxHash) {
+  const result = await pool.query(
+    'SELECT * FROM vault_creation_settlements WHERE source_tx_hash = $1',
+    [sourceTxHash]
+  );
+  return result.rows[0] || null;
+}
+
+// Finishes a vault's DB persistence (vaults-table insert + bridge_transactions row) from a
+// vault_creation_settlements marker whose on-chain settlement already succeeded, WITHOUT calling
+// arcSettlementService again. Mirrors the tail end of runCreateVaultSettlement.
+async function finishPendingSettlementPersistence(pendingSettlement) {
+  const { source_tx_hash: sourceTxHash, on_chain_vault_id: vaultId, settlement_tx_hash: settlementTxHash, relayer_address: relayerAddress } = pendingSettlement;
+  const p = pendingSettlement.params;
+
+  const unlockAtMs = p.unlockAt;
+
+  if (p.splitConfig) {
+    await vaultService.createSplitVault(
+      vaultId, p.userAddress, p.amount, new Date(), new Date(unlockAtMs),
+      p.sourceChain, p.destinationChain, p.bridgeProtocol, p.tokenAddress, p.vaultType,
+      p.splitConfig, settlementTxHash
+    );
+  } else if (p.streamingConfig) {
+    await vaultService.createStreamingVault(
+      vaultId, p.userAddress, p.amount, new Date(), new Date(unlockAtMs),
+      p.sourceChain, p.destinationChain, p.bridgeProtocol, p.tokenAddress, p.vaultType,
+      p.streamingConfig, settlementTxHash
+    );
+  } else {
+    await vaultService.createVault(
+      vaultId, p.userAddress, p.amount, new Date(), new Date(unlockAtMs),
+      p.sourceChain, p.destinationChain, p.bridgeProtocol, p.tokenAddress, p.vaultType,
+      settlementTxHash
+    );
+  }
+
+  const bridgeTransaction = await bridgeService.createBridgeTransaction(
+    sourceTxHash,
+    vaultId,
+    'INBOUND',
+    p.sourceChain,
+    ARC_CHAIN_ID,
+    p.amount,
+    p.bridgeProtocol,
+    p.tokenAddress,
+    'PENDING',
+    JSON.stringify({
+      settlementTxHash,
+      relayerAddress,
+      destinationChain: p.destinationChain || ARC_CHAIN_ID,
+      relayState: 'PENDING_ATTESTATION',
+      destinationMintTxHash: null,
+      mintRecipient: contractAddresses.timeLockVault,
+      lockAmount: p.amount,
+      cctpBurnAmount: p.cctpBurnAmount || p.amount,
+      cctpMaxFeeAmount: p.cctpMaxFeeAmount || '0',
+      cctpFinalityThreshold: p.cctpFinalityThreshold || null,
+    }),
+    null
+  );
+  scheduleInboundCctpRelay(bridgeTransaction);
+
+  await markSettlementPersisted(sourceTxHash);
+
+  logger.info('Finished interrupted vault persistence from vault_creation_settlements marker', {
+    vaultId,
+    sourceTxHash,
+    userAddress: p.userAddress,
+  });
+
+  return {
+    vaultId,
+    status: 'ACTIVE',
+    unlockAt: unlockAtMs,
+    bridgeTxHash: sourceTxHash,
+    destinationTxHash: settlementTxHash,
+    bridgeStatus: {
+      state: 'PENDING_ATTESTATION',
+      estimatedTime: 'usually under 1 minute with fast CCTP, longer if Circle attestation is delayed',
+      destinationMintTxHash: null,
+    },
+  };
+}
+
 function buildCreateProcessingResponse(sourceTxHash, startedAt = Date.now()) {
   return {
     status: 'PROCESSING',
@@ -167,6 +273,12 @@ function startCreateVaultJob(sourceLockKey, params) {
   return job;
 }
 
+function resolveConditionOracleAddress(oracleType) {
+  if (oracleType === 'mock') return contractAddresses.mockPriceOracle;
+  if (oracleType === 'band') return contractAddresses.bandOracleAdapter;
+  return null;
+}
+
 async function runCreateVaultSettlement({
   amount,
   customDuration,
@@ -182,6 +294,9 @@ async function runCreateVaultSettlement({
   cctpFinalityThreshold,
   authId,
   email,
+  condition,
+  splitConfig,
+  streamingConfig,
 }) {
   const now = Math.floor(Date.now() / 1000);
   const unlockAt = now + Math.floor(customDuration / 1000);
@@ -197,31 +312,144 @@ async function runCreateVaultSettlement({
     [userAddress, authId, email]
   );
 
-  const settlement = await arcSettlementService.settleVault({
-    amount,
-    sourceChain,
-    destinationChain,
-    owner: userAddress,
-    unlockAt: new Date(unlockAt * 1000),
-    vaultType,
-  });
+  const hasCondition = !!condition && (condition.oracleType || condition.useTreasuryCheck);
+  let settlement;
+  let vaultId;
 
-  const vaultId = settlement.onChainVaultId;
+  if (hasCondition && (splitConfig || streamingConfig)) {
+    throw new Error('Conditioned vaults cannot be combined with split or streaming vault modes.');
+  }
+
+  // Reconstructable params for vault_creation_settlements - lets a retry finish DB persistence
+  // after a successful on-chain settlement without calling arcSettlementService again.
+  const persistenceParams = {
+    userAddress, amount, unlockAt: unlockAt * 1000, sourceChain, destinationChain,
+    bridgeProtocol, tokenAddress, vaultType, splitConfig, streamingConfig,
+    cctpBurnAmount, cctpMaxFeeAmount, cctpFinalityThreshold,
+  };
+
+  if (splitConfig) {
+    settlement = await arcSettlementService.settleSplitVault({
+      amount,
+      sourceChain,
+      destinationChain,
+      owner: userAddress,
+      unlockAt: new Date(unlockAt * 1000),
+      vaultType,
+      savingsBps: splitConfig.savingsBps,
+      yieldBps: splitConfig.yieldBps,
+      reserveBps: splitConfig.reserveBps,
+    });
+    vaultId = settlement.onChainVaultId;
+    await recordPendingSettlement(sourceTxHash, {
+      onChainVaultId: vaultId,
+      settlementTxHash: settlement.settlementTxHash,
+      relayerAddress: settlement.relayerAddress,
+      params: persistenceParams,
+    });
+
+    await vaultService.createSplitVault(
+      vaultId,
+      userAddress,
+      amount,
+      new Date(),
+      new Date(unlockAt * 1000),
+      sourceChain,
+      destinationChain,
+      bridgeProtocol,
+      tokenAddress,
+      vaultType,
+      splitConfig,
+      settlement.settlementTxHash
+    );
+  } else if (streamingConfig) {
+    settlement = await arcSettlementService.settleStreamingVault({
+      amount,
+      sourceChain,
+      destinationChain,
+      owner: userAddress,
+      unlockAt: new Date(unlockAt * 1000),
+      vaultType,
+      numTranches: streamingConfig.numTranches,
+      intervalSeconds: streamingConfig.intervalSeconds,
+    });
+    vaultId = settlement.onChainVaultId;
+    await recordPendingSettlement(sourceTxHash, {
+      onChainVaultId: vaultId,
+      settlementTxHash: settlement.settlementTxHash,
+      relayerAddress: settlement.relayerAddress,
+      params: persistenceParams,
+    });
+
+    await vaultService.createStreamingVault(
+      vaultId,
+      userAddress,
+      amount,
+      new Date(),
+      new Date(unlockAt * 1000),
+      sourceChain,
+      destinationChain,
+      bridgeProtocol,
+      tokenAddress,
+      vaultType,
+      streamingConfig,
+      settlement.settlementTxHash
+    );
+  } else if (hasCondition) {
+    const conditionOracle = resolveConditionOracleAddress(condition.oracleType);
+    if (condition.oracleType && !conditionOracle) {
+      throw new Error(`Oracle address for "${condition.oracleType}" is not configured in the backend.`);
+    }
+    settlement = await arcSettlementService.settleVaultAdvanced({
+      amount, sourceChain, destinationChain, owner: userAddress,
+      unlockAt: new Date(unlockAt * 1000), vaultType,
+      conditionOracle: conditionOracle || null,
+      conditionThreshold: condition.threshold || 0,
+      conditionAbove: condition.above !== false,
+      treasuryBalanceCheck: condition.useTreasuryCheck ? contractAddresses.treasury : null,
+      treasuryBalanceThreshold: condition.treasuryThreshold || 0,
+    });
+    vaultId = settlement.onChainVaultId;
+    await recordPendingSettlement(sourceTxHash, {
+      onChainVaultId: vaultId,
+      settlementTxHash: settlement.settlementTxHash,
+      relayerAddress: settlement.relayerAddress,
+      params: persistenceParams,
+    });
+    await vaultService.createVault(vaultId, userAddress, amount, new Date(), new Date(unlockAt * 1000), sourceChain, destinationChain, bridgeProtocol, tokenAddress, vaultType, settlement.settlementTxHash);
+  } else {
+    settlement = await arcSettlementService.settleVault({
+      amount,
+      sourceChain,
+      destinationChain,
+      owner: userAddress,
+      unlockAt: new Date(unlockAt * 1000),
+      vaultType,
+    });
+    vaultId = settlement.onChainVaultId;
+    await recordPendingSettlement(sourceTxHash, {
+      onChainVaultId: vaultId,
+      settlementTxHash: settlement.settlementTxHash,
+      relayerAddress: settlement.relayerAddress,
+      params: persistenceParams,
+    });
+
+    await vaultService.createVault(
+      vaultId,
+      userAddress,
+      amount,
+      new Date(),
+      new Date(unlockAt * 1000),
+      sourceChain,
+      destinationChain,
+      bridgeProtocol,
+      tokenAddress,
+      vaultType,
+      settlement.settlementTxHash
+    );
+  }
+
   const relayResult = { state: 'PENDING_ATTESTATION' };
-
-  await vaultService.createVault(
-    vaultId,
-    userAddress,
-    amount,
-    new Date(),
-    new Date(unlockAt * 1000),
-    sourceChain,
-    destinationChain,
-    bridgeProtocol,
-    tokenAddress,
-    vaultType,
-    settlement.settlementTxHash
-  );
 
   const bridgeTransaction = await bridgeService.createBridgeTransaction(
     sourceTxHash,
@@ -250,6 +478,7 @@ async function runCreateVaultSettlement({
     relayResult.state === 'COMPLETE' ? new Date() : null
   );
   scheduleInboundCctpRelay(bridgeTransaction);
+  await markSettlementPersisted(sourceTxHash);
 
   logger.info('Vault created on-chain', {
     vaultId,
@@ -273,6 +502,27 @@ async function runCreateVaultSettlement({
 }
 
 async function buildExistingCreateResponse(sourceTxHash, userAddress) {
+  // Check for an on-chain settlement that already succeeded but never finished its DB write
+  // (e.g. crashed mid-persist) BEFORE the normal bridge_transactions lookup below - otherwise a
+  // retry falls through to startCreateVaultJob and re-runs the entire on-chain settlement,
+  // creating a second real on-chain vault backed by the same single bridged deposit.
+  const pendingSettlement = await getPendingSettlement(sourceTxHash);
+  if (pendingSettlement && !pendingSettlement.vault_persisted) {
+    if (pendingSettlement.params?.userAddress !== userAddress) {
+      return {
+        statusCode: 409,
+        body: {
+          error: {
+            message: 'This source burn transaction is already linked to another wallet.',
+          },
+        },
+      };
+    }
+
+    const body = await finishPendingSettlementPersistence(pendingSettlement);
+    return { statusCode: 201, body };
+  }
+
   const existingBridgeTx = await bridgeService.getBridgeTransaction(sourceTxHash);
   if (!existingBridgeTx) {
     return null;
@@ -461,6 +711,9 @@ router.post('/create', authMiddleware, asyncHandler(async (req, res) => {
     cctpBurnAmount,
     cctpMaxFeeAmount,
     cctpFinalityThreshold,
+    condition,
+    splitConfig,
+    streamingConfig,
   } = req.body;
   const userAddress = (req.user.address || '').toLowerCase();
 
@@ -506,6 +759,42 @@ router.post('/create', authMiddleware, asyncHandler(async (req, res) => {
     });
   }
 
+  let normalizedSplitConfig = null;
+  if (splitConfig) {
+    const savingsBps = Number(splitConfig.savingsBps);
+    const yieldBps = Number(splitConfig.yieldBps);
+    const reserveBps = Number(splitConfig.reserveBps);
+
+    if (
+      !Number.isInteger(savingsBps) || !Number.isInteger(yieldBps) || !Number.isInteger(reserveBps) ||
+      savingsBps < 0 || yieldBps < 0 || reserveBps < 0 ||
+      savingsBps + yieldBps + reserveBps !== 10000
+    ) {
+      return res.status(400).json({ error: { message: 'Split allocation (savingsBps + yieldBps + reserveBps) must sum to exactly 10000.' } });
+    }
+
+    normalizedSplitConfig = { savingsBps, yieldBps, reserveBps };
+  }
+
+  let normalizedStreamingConfig = null;
+  if (streamingConfig) {
+    const numTranches = Number(streamingConfig.numTranches);
+    const intervalSeconds = Number(streamingConfig.intervalSeconds);
+
+    if (!Number.isInteger(numTranches) || numTranches < 2 || numTranches > 60) {
+      return res.status(400).json({ error: { message: 'numTranches must be an integer between 2 and 60.' } });
+    }
+    if (!Number.isInteger(intervalSeconds) || intervalSeconds <= 0) {
+      return res.status(400).json({ error: { message: 'intervalSeconds must be a positive integer.' } });
+    }
+
+    normalizedStreamingConfig = { numTranches, intervalSeconds };
+  }
+
+  if (normalizedSplitConfig && normalizedStreamingConfig) {
+    return res.status(400).json({ error: { message: 'A vault cannot be both a split vault and a streaming vault.' } });
+  }
+
   try {
     const existingCreate = await buildExistingCreateResponse(sourceTxHash, userAddress);
     if (existingCreate) {
@@ -531,6 +820,9 @@ router.post('/create', authMiddleware, asyncHandler(async (req, res) => {
         cctpFinalityThreshold,
         authId: req.user.authId,
         email: req.user.email,
+        condition,
+        splitConfig: normalizedSplitConfig,
+        streamingConfig: normalizedStreamingConfig,
       });
     }
 
@@ -560,15 +852,43 @@ router.get('/:vaultId', asyncHandler(async (req, res) => {
   const { vaultId } = req.params;
 
   try {
-    const vault = await vaultService.getVault(vaultId);
+    let vault = await vaultService.getVault(vaultId);
     if (!vault) {
       return res.status(404).json({ error: { message: 'Vault not found' } });
+    }
+
+    // Arc is authoritative for a completed claim or flexible withdrawal. Reconcile the
+    // local read model before rendering so a confirmed on-chain withdrawal cannot leave
+    // stale funds visible or invite a duplicate claim attempt.
+    try {
+      const onChainVault = await arcSettlementService.getOnChainVault(vaultId);
+      const onChainAmount = Number(onChainVault.totalAmount);
+
+      if (onChainVault.status === 'CLAIMED') {
+        vault = await vaultService.updateVaultStatus(vaultId, 'CLAIMED');
+      } else if (
+        onChainVault.status !== vault.status ||
+        onChainAmount !== Number(vault.total_amount)
+      ) {
+        vault = await vaultService.syncVaultState(
+          vaultId,
+          onChainVault.totalAmount,
+          onChainVault.status
+        );
+      }
+    } catch (reconciliationError) {
+      logger.warn('Could not reconcile vault detail with Arc', {
+        vaultId,
+        error: reconciliationError.message,
+      });
     }
 
     const deposits = await vaultService.getVaultDeposits(vaultId);
     let bridgeTransactions = await bridgeService.getVaultBridgeTransactions(vaultId);
     await refreshInboundVaultFunding(bridgeTransactions, { waitForAttestationMs: 1000 });
-    await ensureReserveCoverageForClaims(vault.total_amount);
+    if (vault.status !== 'CLAIMED') {
+      await ensureReserveCoverageForClaims(vault.total_amount);
+    }
     bridgeTransactions = await bridgeService.getVaultBridgeTransactions(vaultId);
 
     res.json({
@@ -576,6 +896,7 @@ router.get('/:vaultId', asyncHandler(async (req, res) => {
       deposits,
       bridgeTransactions,
       splitAllocation: vaultService.getSplitAllocation(vault),
+      streamingAllocation: vaultService.getStreamingAllocation(vault),
     });
   } catch (err) {
     logger.error('Error fetching vault', { error: err.message });
@@ -636,6 +957,62 @@ router.post('/:vaultId/claim-bucket', authMiddleware, asyncHandler(async (req, r
   } catch (err) {
     logger.error('Error recording bucket claim', { error: err.message, vaultId, userAddress, bucket });
     res.status(500).json({ error: { message: 'Failed to record bucket claim' } });
+  }
+}));
+
+// Record a streaming-vault tranche claim after the on-chain claimStreamingTranches() tx has
+// confirmed. Mirrors /claim-bucket: the wallet transaction is the source of truth, this just
+// syncs backend state (claimed_tranches, total_amount, status) so the UI reflects it.
+router.post('/:vaultId/claim-tranches', authMiddleware, asyncHandler(async (req, res) => {
+  const { vaultId } = req.params;
+  const { claimTxHash } = req.body;
+  const userAddress = req.user.address ? req.user.address.toLowerCase() : null;
+
+  if (!userAddress) {
+    return res.status(400).json({
+      error: { message: 'No wallet address found in your wallet session. Please reconnect your wallet and try again.' }
+    });
+  }
+
+  if (typeof claimTxHash !== 'string' || !claimTxHash.startsWith('0x')) {
+    return res.status(400).json({
+      error: { message: 'Missing on-chain claimStreamingTranches transaction hash. Please retry after the wallet transaction is confirmed.' }
+    });
+  }
+
+  try {
+    const vault = await vaultService.getVault(vaultId);
+    if (!vault) {
+      return res.status(404).json({ error: { message: 'Vault not found' } });
+    }
+    if (vault.owner_address !== userAddress) {
+      return res.status(403).json({ error: { message: 'Not vault owner' } });
+    }
+    if (!vault.is_streaming) {
+      return res.status(400).json({ error: { message: 'Not a streaming vault' } });
+    }
+
+    const onChainVault = await arcSettlementService.getOnChainVault(vaultId);
+    const status = onChainVault.status === 'CLAIMED' ? 'CLAIMED' : vault.status;
+
+    const updated = await vaultService.syncClaimedTranches(
+      vaultId,
+      onChainVault.claimedTranches !== undefined ? Number(onChainVault.claimedTranches) : vault.claimed_tranches,
+      status === 'CLAIMED' ? '0' : null,
+      status
+    );
+
+    logger.info('Streaming vault tranches claimed', { vaultId, userAddress, claimTxHash });
+
+    res.json({
+      vaultId,
+      status: updated.status,
+      streamingAllocation: vaultService.getStreamingAllocation(updated),
+      claimTxHash,
+    });
+  } catch (err) {
+    logger.error('Error recording tranche claim', { error: err.message, vaultId, userAddress });
+    res.status(500).json({ error: { message: 'Failed to record tranche claim' } });
   }
 }));
 
@@ -1023,6 +1400,54 @@ router.post('/:vaultId/claim', authMiddleware, asyncHandler(async (req, res) => 
           bridgeTxHash: existingBridgeTx.tx_hash,
           destinationChain: claimDestinationChain,
           bridgeStatus: buildOutboundBridgeStatus(existingBridgeTx),
+        });
+      }
+
+      // The independent eventListenerService can mark a vault CLAIMED (from the direct Arc
+      // claimVault() event) before this route's own bridge-back leg gets a chance to record its
+      // CCTP burn transaction - discovered live during a claim-back-to-source-chain test where
+      // the on-chain bridge-back succeeded but this request 400'd, leaving the outbound transfer
+      // completely untracked. If a real bridge-back tx hash is present and hasn't been recorded
+      // yet, record it now instead of dropping it - the vault being CLAIMED doesn't mean the
+      // bridge-back leg has been accounted for.
+      if (claimDestinationChain !== ARC_CHAIN_ID && typeof bridgeBackTxHash === 'string' && bridgeBackTxHash.startsWith('0x')) {
+        const initialBridgeMetadata = {
+          type: 'CCTP_RETURN_TO_SOURCE',
+          claimTxHash,
+          recipient: userAddress,
+          destinationChain: claimDestinationChain,
+        };
+
+        await bridgeService.createBridgeTransaction(
+          bridgeBackTxHash,
+          vaultId,
+          'OUTBOUND',
+          ARC_CHAIN_ID,
+          claimDestinationChain,
+          vault.total_amount,
+          vault.bridge_protocol,
+          vault.token_address,
+          'PENDING',
+          JSON.stringify(initialBridgeMetadata),
+          null
+        );
+
+        logger.info('Recorded late-arriving bridge-back leg for an already-claimed vault', {
+          vaultId,
+          userAddress,
+          claimTxHash,
+          bridgeBackTxHash,
+          destinationChain: claimDestinationChain,
+        });
+
+        return res.json({
+          vaultId,
+          status: 'CLAIMED',
+          amount: vault.total_amount,
+          claimedTxHash: claimTxHash,
+          bridgeTxHash: bridgeBackTxHash,
+          destinationChain: claimDestinationChain,
+          bridgeStatus: { state: 'PENDING_ATTESTATION', estimatedTime: '2-5 minutes', destinationTxHash: null },
         });
       }
 
