@@ -3,22 +3,19 @@ import logger from '../config/logger.js';
 import { ethers } from 'ethers';
 import { contractAddresses, getExplorerAddressUrl } from '../config/contracts.js';
 
+// verifyLiveReserves() recomputes directly from TimeLockVault's on-chain storage (every vault,
+// summed live) rather than getReserveDetails()'s reliance on VaultFactory's counters - those
+// counters are never populated in practice, since deposits are created directly on TimeLockVault
+// via BridgeOrchestrator and never go through VaultFactory. getReserveDetails() doesn't error,
+// it just silently returns 0s - confirmed live. verifyLiveReserves() is the reliable source.
 const PROOF_OF_RESERVES_ABI = [
-  'function getReserveDetails() view returns (uint256 totalLocked, uint256 totalVaults, uint256 totalUsers, bool verified)',
-];
-
-const ERC20_ABI = [
-  'function balanceOf(address account) view returns (uint256)',
+  'function verifyLiveReserves() view returns (uint256 usdcBalance, uint256 activeLocked, uint256 activeVaultCount, bool fullyReserved)',
 ];
 
 const USDC_DECIMALS = 6;
 
 function formatUsdc(value) {
   return ethers.formatUnits(value || 0n, USDC_DECIMALS);
-}
-
-function toUsdcUnits(value) {
-  return ethers.parseUnits(String(value || '0'), USDC_DECIMALS);
 }
 
 function getContractMetadata() {
@@ -102,21 +99,18 @@ async function getOnChainReserveData() {
 
   const provider = new ethers.JsonRpcProvider(arcRpcUrl);
   const proofContract = new ethers.Contract(proofOfReserves, PROOF_OF_RESERVES_ABI, provider);
-  const usdcContract = new ethers.Contract(usdc, ERC20_ABI, provider);
 
-  const [reserveDetails, timeLockVaultBalanceRaw] = await Promise.all([
-    proofContract.getReserveDetails(),
-    usdcContract.balanceOf(timeLockVault),
-  ]);
+  const [usdcBalanceRaw, activeLockedRaw, activeVaultCount, fullyReserved] =
+    await proofContract.verifyLiveReserves();
 
   return {
-    proofContractTotalLockedRaw: reserveDetails[0],
-    timeLockVaultBalanceRaw,
-    proofContractTotalLocked: formatUsdc(reserveDetails[0]),
-    proofContractTotalVaults: Number(reserveDetails[1]),
-    proofContractTotalUsers: Number(reserveDetails[2]),
-    proofContractVerified: Boolean(reserveDetails[3]),
-    timeLockVaultBalance: formatUsdc(timeLockVaultBalanceRaw),
+    proofContractTotalLockedRaw: activeLockedRaw,
+    timeLockVaultBalanceRaw: usdcBalanceRaw,
+    proofContractTotalLocked: formatUsdc(activeLockedRaw),
+    proofContractTotalVaults: Number(activeVaultCount),
+    proofContractTotalUsers: null,
+    proofContractVerified: Boolean(fullyReserved),
+    timeLockVaultBalance: formatUsdc(usdcBalanceRaw),
   };
 }
 
@@ -131,11 +125,16 @@ export const proofOfReservesService = {
       let verified = false;
       let timeLockVaultBalance = databaseReserves.totalLocked;
 
+      let onChainLiabilities = databaseReserves.totalLocked;
+
       try {
         const chainReserves = await getOnChainReserveData();
-        const userLiabilitiesRaw = toUsdcUnits(databaseReserves.totalLocked);
-        verified = chainReserves.timeLockVaultBalanceRaw >= userLiabilitiesRaw;
+        // Trust the contract's own live-computed fullyReserved / activeLocked entirely - not a
+        // comparison against database totals, which is exactly the unreliable dependency this
+        // was meant to remove. verifyLiveReserves() already recomputes both sides on-chain.
+        verified = chainReserves.proofContractVerified;
         timeLockVaultBalance = chainReserves.timeLockVaultBalance;
+        onChainLiabilities = chainReserves.proofContractTotalLocked;
         onChain = {
           proofContractTotalLocked: chainReserves.proofContractTotalLocked,
           proofContractTotalVaults: chainReserves.proofContractTotalVaults,
@@ -160,7 +159,7 @@ export const proofOfReservesService = {
         verified,
         verificationDetails: {
           timeLockVaultBalance,
-          userLiabilities: databaseReserves.totalLocked,
+          userLiabilities: onChainLiabilities,
           match: verified
         },
         source,
