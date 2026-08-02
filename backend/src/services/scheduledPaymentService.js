@@ -34,9 +34,12 @@ const SCHEDULED_PAYMENT_ABI = [
   'function isSlotDue(uint256 scheduleId, uint256 slotIndex) view returns (bool due, string reason)',
   'function slotExecuted(uint256 scheduleId, uint256 slotIndex) view returns (bool)',
   'function executePayment(uint256 scheduleId, uint256 slotIndex) external',
+  'function createSchedule(address recipient, uint256 amount, uint256 minTreasuryBalanceAfter, uint256[] releaseTimestamps) external returns (uint256 scheduleId)',
   'event PaymentExecuted(uint256 indexed scheduleId, uint256 indexed slotIndex, address indexed recipient, uint256 amount)',
+  'event PaymentScheduleCreated(uint256 indexed scheduleId, address indexed recipient, uint256 amount, uint256 minTreasuryBalanceAfter, uint256 slotCount)',
 ];
 
+const USDC_DECIMALS = 6;
 const DEFAULT_CRON_EXPRESSION = process.env.SCHEDULED_PAYMENT_CRON || '*/1 * * * *'; // every minute
 
 export class ScheduledPaymentService {
@@ -131,6 +134,95 @@ export class ScheduledPaymentService {
     } finally {
       this.isChecking = false;
     }
+  }
+
+  /// Read every schedule directly from the contract, with per-slot executed/due status. Used by
+  /// the read-only list/detail routes (backend/src/routes/scheduledPayments.js), independent of
+  /// whether the keeper cron loop is currently running.
+  async listSchedules() {
+    if (!this.contract) {
+      throw new Error('Scheduled payments are not configured. Missing ARC RPC, PRIVATE_KEY, or ARC_SCHEDULED_PAYMENT address.');
+    }
+
+    const scheduleCount = Number(await this.contract.nextScheduleId());
+    const schedules = [];
+
+    for (let scheduleId = 0; scheduleId < scheduleCount; scheduleId++) {
+      const schedule = await this.contract.getSchedule(scheduleId);
+
+      const slots = [];
+      for (let slotIndex = 0; slotIndex < schedule.releaseTimestamps.length; slotIndex++) {
+        const executed = await this.contract.slotExecuted(scheduleId, slotIndex);
+        const [due, reason] = executed
+          ? [false, 'Slot already executed']
+          : await this.contract.isSlotDue(scheduleId, slotIndex);
+
+        slots.push({
+          slotIndex,
+          releaseTimestamp: Number(schedule.releaseTimestamps[slotIndex]),
+          executed,
+          due,
+          reason,
+        });
+      }
+
+      schedules.push({
+        scheduleId,
+        recipient: schedule.recipient,
+        amount: ethers.formatUnits(schedule.amount, USDC_DECIMALS),
+        minTreasuryBalanceAfter: ethers.formatUnits(schedule.minTreasuryBalanceAfter, USDC_DECIMALS),
+        active: schedule.active,
+        slots,
+      });
+    }
+
+    return schedules;
+  }
+
+  /// Submit ScheduledPayment.createSchedule() from the relayer wallet. onlyOwner on-chain (see
+  /// contracts/arc/ScheduledPayment.sol) - the admin-key gate in the route is what stands in for
+  /// user authorization here, since there is no user-wallet-authorized path for this call.
+  async createSchedule({ recipient, amount, minTreasuryBalanceAfter, releaseTimestamps }) {
+    if (!this.contract) {
+      throw new Error('Scheduled payments are not configured. Missing ARC RPC, PRIVATE_KEY, or ARC_SCHEDULED_PAYMENT address.');
+    }
+
+    const amountUnits = ethers.parseUnits(String(amount), USDC_DECIMALS);
+    const minTreasuryBalanceAfterUnits = ethers.parseUnits(String(minTreasuryBalanceAfter || 0), USDC_DECIMALS);
+    const recipientAddress = ethers.getAddress(recipient);
+
+    const tx = await this.contract.createSchedule(
+      recipientAddress,
+      amountUnits,
+      minTreasuryBalanceAfterUnits,
+      releaseTimestamps
+    );
+    const receipt = await tx.wait();
+
+    if (!receipt || receipt.status !== 1) {
+      throw new Error('createSchedule transaction reverted');
+    }
+
+    const iface = new ethers.Interface(SCHEDULED_PAYMENT_ABI);
+    let scheduleId = null;
+
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed?.name === 'PaymentScheduleCreated') {
+          scheduleId = Number(parsed.args.scheduleId);
+          break;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    if (scheduleId === null) {
+      throw new Error('createSchedule succeeded but the schedule ID could not be read from the receipt.');
+    }
+
+    return { scheduleId, txHash: tx.hash };
   }
 
   async executeSlot(scheduleId, slotIndex) {
