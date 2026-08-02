@@ -19,6 +19,38 @@ export interface Vault {
   claimed_tx_hash?: string;
   deposits?: Deposit[];
   bridgeTransactions?: BridgeTransaction[];
+  is_split?: boolean;
+  is_streaming?: boolean;
+  splitAllocation?: SplitAllocation | null;
+  streamingAllocation?: StreamingAllocation | null;
+}
+
+export interface SplitAllocation {
+  savingsBps: number;
+  yieldBps: number;
+  reserveBps: number;
+  buckets: {
+    savings: { amount: number; claimed: boolean };
+    yield: { amount: number; claimed: boolean };
+    reserve: { amount: number; claimed: boolean };
+  };
+}
+
+export interface StreamingTranche {
+  index: number;
+  amount: number;
+  maturesAt: number;
+  matured: boolean;
+  claimed: boolean;
+}
+
+export interface StreamingAllocation {
+  numTranches: number;
+  intervalSeconds: number;
+  claimedTranches: number;
+  maturedTranches: number;
+  perTranche: number;
+  tranches: StreamingTranche[];
 }
 
 export interface Deposit {

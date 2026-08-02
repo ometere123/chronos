@@ -3,28 +3,47 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
-import { encodeFunctionData, formatUnits, getAddress, parseUnits } from 'viem';
+import { decodeFunctionResult, encodeFunctionData, formatUnits, getAddress, parseUnits, zeroAddress } from 'viem';
 import CountdownTimer from '@/components/ui/CountdownTimer';
 import { ARC_CCTP_DOMAIN, ARC_CHAIN_ID, CHAINS, getChainName } from '@/config/chains';
 import { CONTRACT_ADDRESSES } from '@/config/constants';
-import { useInjectedWallet } from '@/hooks/useInjectedWallet';
+import { useWallet } from '@/hooks/useWallet';
 import {
   CCTP_FAST_FINALITY_THRESHOLD,
   CCTP_STANDARD_FINALITY_THRESHOLD,
   CCTP_TOKEN_MESSENGER_ABI,
+  CREDIT_LINE_ABI,
   ERC20_APPROVE_ABI,
+  PRICE_ORACLE_ABI,
+  SPLIT_BUCKET_INDEX,
   TIMELOCK_VAULT_ABI,
+  TIMELOCK_VAULT_VIEW_ABI,
   ZERO_BYTES32,
   getTransactionErrorLog,
   getTransactionErrorMessage,
+  publicEthCall,
   simulateTransaction,
   toBytes32Address,
   waitForErc20Allowance,
   waitForTransactionReceipt,
+  type SplitBucketName,
 } from '@/lib/evm';
+import apiClient from '@/services/api';
+import { creditLineService } from '@/services/creditLineService';
 import { vaultService } from '@/services/vaultService';
 import { useUIStore } from '@/store/uiStore';
 import type { BridgeTransaction, Vault } from '@/types';
+
+const ZERO_ADDRESS = zeroAddress;
+const TREASURY_BALANCE_ABI = [
+  {
+    type: 'function',
+    name: 'getUsdcBalance',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const;
 
 function parseBridgeMetadata(attestationData?: string) {
   if (!attestationData) {
@@ -142,9 +161,11 @@ function buildVaultLifecycle(vault?: Vault) {
     .filter((tx) => getLifecycleKind(tx) === 'MATURE_CLAIM')
     .reduce((sum, tx) => sum + parseUsdAmount(tx.amount), 0);
   const fallbackCurrent = parseUsdAmount(vault?.totalAmount);
-  const currentLocked = relevantTransactions.length > 0
-    ? Math.max(deposited - earlyWithdrawn - maturedClaimed, 0)
-    : fallbackCurrent;
+  const currentLocked = vault?.status === 'CLAIMED'
+    ? 0
+    : relevantTransactions.length > 0
+      ? Math.max(deposited - earlyWithdrawn - maturedClaimed, 0)
+      : fallbackCurrent;
   const timeline = [...relevantTransactions]
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
     .map((tx) => ({
@@ -200,10 +221,11 @@ export default function VaultDetailsPage() {
   const searchParams = useSearchParams();
   const vaultId = params.vaultId;
   const { showNotification } = useUIStore();
-  const { address, connect, switchChain } = useInjectedWallet();
+  const { address, getProvider, connect, switchChain } = useWallet();
 
   const [addAmount, setAddAmount] = useState('');
   const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [borrowAmount, setBorrowAmount] = useState('');
   const [destChain, setDestChain] = useState(String(ARC_CHAIN_ID));
   const [withdrawDestinationChain, setWithdrawDestinationChain] = useState(String(ARC_CHAIN_ID));
   const [showCreatedBanner, setShowCreatedBanner] = useState(false);
@@ -231,6 +253,147 @@ export default function VaultDetailsPage() {
     queryFn: () => vaultService.getVault(vaultId),
     enabled: !!vaultId,
     refetchInterval: 5000,
+  });
+
+  // Live on-chain read of the oracle-gated/treasury-guard unlock condition (Item 5/6) and the
+  // agent-delegate status (Item 14/15), read directly from TimeLockVault + oracle contracts via
+  // a public RPC call - independent of whether a wallet is connected.
+  const { data: onChainInfo } = useQuery({
+    queryKey: ['vaultOnChainCondition', vaultId],
+    queryFn: async () => {
+      const rpcUrl = CHAINS[ARC_CHAIN_ID].rpc;
+      const timelockVaultAddress = getAddress(CONTRACT_ADDRESSES.TIMELOCK_VAULT);
+
+      const getVaultResult = await publicEthCall(
+        rpcUrl,
+        timelockVaultAddress,
+        encodeFunctionData({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'getVault', args: [vaultId as `0x${string}`] })
+      );
+      const onChainVault = decodeFunctionResult({
+        abi: TIMELOCK_VAULT_VIEW_ABI,
+        functionName: 'getVault',
+        data: getVaultResult,
+      });
+
+      const delegateResult = await publicEthCall(
+        rpcUrl,
+        timelockVaultAddress,
+        encodeFunctionData({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'vaultDelegate', args: [vaultId as `0x${string}`] })
+      );
+      const delegate = decodeFunctionResult({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'vaultDelegate', data: delegateResult });
+
+      const feeResult = await publicEthCall(
+        rpcUrl,
+        timelockVaultAddress,
+        encodeFunctionData({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'agentFeeBps', args: [] })
+      );
+      const agentFeeBps = decodeFunctionResult({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'agentFeeBps', data: feeResult });
+
+      let oraclePrice: bigint | null = null;
+      if (onChainVault.conditionOracle && onChainVault.conditionOracle.toLowerCase() !== ZERO_ADDRESS) {
+        const priceResult = await publicEthCall(
+          rpcUrl,
+          onChainVault.conditionOracle,
+          encodeFunctionData({ abi: PRICE_ORACLE_ABI, functionName: 'getPrice', args: [] })
+        );
+        oraclePrice = decodeFunctionResult({ abi: PRICE_ORACLE_ABI, functionName: 'getPrice', data: priceResult }) as bigint;
+      }
+
+      let treasuryBalance: bigint | null = null;
+      if (onChainVault.treasuryBalanceCheck && onChainVault.treasuryBalanceCheck.toLowerCase() !== ZERO_ADDRESS) {
+        const balResult = await publicEthCall(
+          rpcUrl,
+          onChainVault.treasuryBalanceCheck,
+          encodeFunctionData({ abi: TREASURY_BALANCE_ABI, functionName: 'getUsdcBalance', args: [] })
+        );
+        treasuryBalance = decodeFunctionResult({ abi: TREASURY_BALANCE_ABI, functionName: 'getUsdcBalance', data: balResult }) as bigint;
+      }
+
+      return { vault: onChainVault, delegate: delegate as string, agentFeeBps: Number(agentFeeBps), oraclePrice, treasuryBalance };
+    },
+    enabled: !!vaultId && !!CONTRACT_ADDRESSES.TIMELOCK_VAULT,
+    refetchInterval: 15000,
+    retry: 1,
+  });
+
+  const { data: creditLineStatus } = useQuery({
+    queryKey: ['creditLineVault', vaultId],
+    queryFn: () => creditLineService.getVaultStatus(vaultId),
+    enabled: !!vaultId && !!CONTRACT_ADDRESSES.CREDIT_LINE,
+    refetchInterval: 10000,
+    retry: false,
+  });
+
+  const { data: agentAddressData } = useQuery({
+    queryKey: ['agentAddress'],
+    queryFn: async () => {
+      const response = await apiClient.get('/agent/address');
+      return response.data as { address: string };
+    },
+    retry: 1,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const conditionOracleLabel = (address?: string) => {
+    if (!address) return '';
+    const lower = address.toLowerCase();
+    if (lower === CONTRACT_ADDRESSES.MOCK_PRICE_ORACLE.toLowerCase()) return 'Mock Price Oracle';
+    if (lower === CONTRACT_ADDRESSES.BAND_ORACLE_ADAPTER.toLowerCase()) return 'Band Protocol';
+    return address;
+  };
+
+  const delegateMutation = useMutation({
+    mutationFn: async (delegateAddress: string) => {
+      const activeAddress = address?.toLowerCase();
+      if (!activeAddress) {
+        throw new Error('No wallet connected. Please connect your wallet first.');
+      }
+
+      const timelockVaultAddress = CONTRACT_ADDRESSES.TIMELOCK_VAULT;
+      if (!timelockVaultAddress) {
+        throw new Error('Arc TimeLockVault address is missing.');
+      }
+
+      const activeProvider = await getProvider();
+      if (!activeProvider) {
+        throw new Error('No wallet provider found.');
+      }
+
+      await switchChain(ARC_CHAIN_ID);
+
+      const data = encodeFunctionData({
+        abi: TIMELOCK_VAULT_ABI,
+        functionName: 'setVaultDelegate',
+        args: [vaultId as `0x${string}`, getAddress(delegateAddress)],
+      });
+
+      const tx = {
+        from: activeAddress,
+        to: getAddress(timelockVaultAddress),
+        data,
+        value: '0x0',
+      } as const;
+
+      await simulateTransaction(activeProvider, tx, 'Set vault delegate');
+      const hash = (await activeProvider.request({
+        method: 'eth_sendTransaction',
+        params: [tx],
+      })) as `0x${string}`;
+      await waitForTransactionReceipt(activeProvider, hash, 'Set vault delegate');
+      return hash;
+    },
+    onSuccess: async (_hash, delegateAddress) => {
+      await queryClient.invalidateQueries({ queryKey: ['vaultOnChainCondition', vaultId] });
+      showNotification(
+        delegateAddress === ZERO_ADDRESS ? 'Agent delegate revoked.' : 'Vault delegated to the autonomous agent.',
+        'success'
+      );
+    },
+    onError: (error: any) => {
+      const message = getTransactionErrorMessage(error, 'Failed to update vault delegate');
+      console.error('[vault-delegate] Error:', getTransactionErrorLog(error, 'Failed to update vault delegate'));
+      showNotification(message, 'error', 10000);
+    },
   });
 
   useEffect(() => {
@@ -308,6 +471,18 @@ export default function VaultDetailsPage() {
     !!CHAINS[vault.sourceChain]?.cctpTokenMessenger &&
     !inboundFundingBlocked;
 
+  const canBorrow =
+    !!vault &&
+    vault.status === 'ACTIVE' &&
+    Math.floor(Date.now() / 1000) < vault.unlockAt &&
+    !!CONTRACT_ADDRESSES.CREDIT_LINE &&
+    !!creditLineStatus &&
+    !creditLineStatus.hasActiveLoan &&
+    !creditLineStatus.locked;
+
+  const hasActiveLoan = !!creditLineStatus?.hasActiveLoan;
+  const maxBorrowableAmount = parseFloat(creditLineStatus?.maxBorrowable || '0');
+
   const canClaimToSourceChain =
     !!vault &&
     vault.bridgeProtocol === 'CCTP' &&
@@ -341,7 +516,7 @@ export default function VaultDetailsPage() {
       let activeAddress = address?.toLowerCase();
       if (!activeAddress) {
         setClaimStatusMessage('Connecting wallet...');
-        activeAddress = await connect();
+        connect();
       }
 
       if (!activeAddress) {
@@ -361,9 +536,9 @@ export default function VaultDetailsPage() {
         throw new Error('Arc TimeLockVault address is missing. Check NEXT_PUBLIC_TIMELOCK_VAULT in .env');
       }
 
-      const activeProvider = window.ethereum;
+      const activeProvider = await getProvider();
       if (!activeProvider) {
-        throw new Error('No injected wallet provider found.');
+        throw new Error('No wallet provider found.');
       }
 
       setClaimStatusMessage('Switching wallet to Arc Testnet...');
@@ -523,7 +698,7 @@ export default function VaultDetailsPage() {
 
       let activeAddress = address?.toLowerCase();
       if (!activeAddress) {
-        activeAddress = await connect();
+        connect();
       }
 
       if (!activeAddress) {
@@ -543,9 +718,9 @@ export default function VaultDetailsPage() {
         throw new Error(preflight.arcSettlement.reason || 'Arc settlement is not ready.');
       }
 
-      const activeProvider = window.ethereum;
+      const activeProvider = await getProvider();
       if (!activeProvider) {
-        throw new Error('No injected wallet provider found.');
+        throw new Error('No wallet provider found.');
       }
 
       const sourceConfig = CHAINS[vault.sourceChain];
@@ -664,7 +839,7 @@ export default function VaultDetailsPage() {
 
       let activeAddress = address?.toLowerCase();
       if (!activeAddress) {
-        activeAddress = await connect();
+        connect();
       }
 
       if (!activeAddress) {
@@ -684,9 +859,9 @@ export default function VaultDetailsPage() {
         throw new Error('Arc TimeLockVault address is missing. Check NEXT_PUBLIC_TIMELOCK_VAULT in .env');
       }
 
-      const activeProvider = window.ethereum;
+      const activeProvider = await getProvider();
       if (!activeProvider) {
-        throw new Error('No injected wallet provider found.');
+        throw new Error('No wallet provider found.');
       }
 
       const withdrawDestination = parseInt(withdrawDestinationChain, 10);
@@ -831,6 +1006,254 @@ export default function VaultDetailsPage() {
       showNotification(getTransactionErrorMessage(error, 'Failed to withdraw'), 'error'),
   });
 
+  const borrowMutation = useMutation({
+    mutationFn: async () => {
+      if (!vault) {
+        throw new Error('Vault details are still loading.');
+      }
+
+      const creditLineAddress = CONTRACT_ADDRESSES.CREDIT_LINE;
+      if (!creditLineAddress) {
+        throw new Error('CreditLine address is missing. Check NEXT_PUBLIC_CREDIT_LINE in .env');
+      }
+
+      const activeAddress = address?.toLowerCase();
+      if (!activeAddress) {
+        throw new Error('No wallet connected. Please connect your wallet first.');
+      }
+
+      const activeProvider = await getProvider();
+      if (!activeProvider) {
+        throw new Error('No wallet provider found.');
+      }
+
+      await switchChain(ARC_CHAIN_ID);
+
+      const amountUnits = parseUnits(borrowAmount, 6);
+      const borrowData = encodeFunctionData({
+        abi: CREDIT_LINE_ABI,
+        functionName: 'borrow',
+        args: [vaultId as `0x${string}`, amountUnits],
+      });
+
+      const borrowTx = {
+        from: activeAddress,
+        to: getAddress(creditLineAddress),
+        data: borrowData,
+        value: '0x0',
+      } as const;
+
+      await simulateTransaction(activeProvider, borrowTx, 'Borrow against vault');
+
+      showNotification('Submitting borrow transaction. Confirm it in your wallet.', 'info');
+      const borrowHash = (await activeProvider.request({
+        method: 'eth_sendTransaction',
+        params: [borrowTx],
+      })) as `0x${string}`;
+
+      await waitForTransactionReceipt(activeProvider, borrowHash, 'Borrow against vault');
+
+      return { borrowHash };
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['creditLineVault', vaultId] });
+      await queryClient.invalidateQueries({ queryKey: ['vault', vaultId] });
+      showNotification('Borrow successful! USDC has been sent to your wallet.', 'success');
+      setBorrowAmount('');
+    },
+    onError: (error: any) =>
+      showNotification(getTransactionErrorMessage(error, 'Failed to borrow'), 'error'),
+  });
+
+  const repayMutation = useMutation({
+    mutationFn: async () => {
+      if (!vault || !creditLineStatus) {
+        throw new Error('Vault or loan details are still loading.');
+      }
+
+      const creditLineAddress = CONTRACT_ADDRESSES.CREDIT_LINE;
+      if (!creditLineAddress) {
+        throw new Error('CreditLine address is missing. Check NEXT_PUBLIC_CREDIT_LINE in .env');
+      }
+
+      const activeAddress = address?.toLowerCase();
+      if (!activeAddress) {
+        throw new Error('No wallet connected. Please connect your wallet first.');
+      }
+
+      const activeProvider = await getProvider();
+      if (!activeProvider) {
+        throw new Error('No wallet provider found.');
+      }
+
+      await switchChain(ARC_CHAIN_ID);
+
+      const arcUsdc = getAddress(CHAINS[ARC_CHAIN_ID].usdc);
+      const creditLineAddr = getAddress(creditLineAddress);
+      const owedUnits = parseUnits(creditLineStatus.totalOwed, 6);
+
+      showNotification('Approving USDC for repayment. Confirm it in your wallet.', 'info');
+      const approveData = encodeFunctionData({
+        abi: ERC20_APPROVE_ABI,
+        functionName: 'approve',
+        args: [creditLineAddr, owedUnits],
+      });
+
+      const approveTx = {
+        from: activeAddress,
+        to: arcUsdc,
+        data: approveData,
+        value: '0x0',
+      } as const;
+
+      await simulateTransaction(activeProvider, approveTx, 'USDC approval');
+
+      const approveHash = (await activeProvider.request({
+        method: 'eth_sendTransaction',
+        params: [approveTx],
+      })) as `0x${string}`;
+
+      await waitForTransactionReceipt(activeProvider, approveHash, 'USDC approval');
+      await waitForErc20Allowance(activeProvider, activeAddress, arcUsdc, creditLineAddr, owedUnits);
+
+      const repayData = encodeFunctionData({
+        abi: CREDIT_LINE_ABI,
+        functionName: 'repay',
+        args: [vaultId as `0x${string}`],
+      });
+
+      const repayTx = {
+        from: activeAddress,
+        to: creditLineAddr,
+        data: repayData,
+        value: '0x0',
+      } as const;
+
+      await simulateTransaction(activeProvider, repayTx, 'Repay loan');
+
+      showNotification('Submitting repayment transaction. Confirm it in your wallet.', 'info');
+      const repayHash = (await activeProvider.request({
+        method: 'eth_sendTransaction',
+        params: [repayTx],
+      })) as `0x${string}`;
+
+      await waitForTransactionReceipt(activeProvider, repayHash, 'Repay loan');
+
+      return { repayHash };
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['creditLineVault', vaultId] });
+      await queryClient.invalidateQueries({ queryKey: ['vault', vaultId] });
+      showNotification('Loan repaid! Vault collateral has been unlocked.', 'success');
+    },
+    onError: (error: any) =>
+      showNotification(getTransactionErrorMessage(error, 'Failed to repay'), 'error'),
+  });
+
+  const claimBucketMutation = useMutation({
+    mutationFn: async (bucket: SplitBucketName) => {
+      const activeAddress = address?.toLowerCase();
+      if (!activeAddress) {
+        throw new Error('No wallet connected. Please connect your wallet first.');
+      }
+
+      const timelockVaultAddress = CONTRACT_ADDRESSES.TIMELOCK_VAULT;
+      if (!timelockVaultAddress) {
+        throw new Error('Arc TimeLockVault address is missing. Check NEXT_PUBLIC_TIMELOCK_VAULT in .env');
+      }
+
+      const activeProvider = await getProvider();
+      if (!activeProvider) {
+        throw new Error('No wallet provider found.');
+      }
+
+      await switchChain(ARC_CHAIN_ID);
+
+      const claimData = encodeFunctionData({
+        abi: TIMELOCK_VAULT_ABI,
+        functionName: 'claimBucket',
+        args: [vaultId as `0x${string}`, SPLIT_BUCKET_INDEX[bucket]],
+      });
+
+      const claimTx = {
+        from: activeAddress,
+        to: getAddress(timelockVaultAddress),
+        data: claimData,
+        value: '0x0',
+      } as const;
+
+      await simulateTransaction(activeProvider, claimTx, `Claim ${bucket} bucket`);
+
+      showNotification(`Submitting claim for ${bucket} bucket...`, 'info');
+      const claimHash = (await activeProvider.request({
+        method: 'eth_sendTransaction',
+        params: [claimTx],
+      })) as `0x${string}`;
+
+      await waitForTransactionReceipt(activeProvider, claimHash, `Claim ${bucket} bucket`);
+
+      return vaultService.claimBucket(vaultId, bucket, claimHash);
+    },
+    onSuccess: async (_data, bucket) => {
+      await queryClient.invalidateQueries({ queryKey: ['vault', vaultId] });
+      showNotification(`${bucket.charAt(0).toUpperCase() + bucket.slice(1)} bucket claimed!`, 'success');
+    },
+    onError: (error: any) =>
+      showNotification(getTransactionErrorMessage(error, 'Failed to claim bucket'), 'error'),
+  });
+
+  const claimTranchesMutation = useMutation({
+    mutationFn: async () => {
+      const activeAddress = address?.toLowerCase();
+      if (!activeAddress) {
+        throw new Error('No wallet connected. Please connect your wallet first.');
+      }
+
+      const timelockVaultAddress = CONTRACT_ADDRESSES.TIMELOCK_VAULT;
+      if (!timelockVaultAddress) {
+        throw new Error('Arc TimeLockVault address is missing. Check NEXT_PUBLIC_TIMELOCK_VAULT in .env');
+      }
+
+      const activeProvider = await getProvider();
+      if (!activeProvider) {
+        throw new Error('No wallet provider found.');
+      }
+
+      await switchChain(ARC_CHAIN_ID);
+
+      const claimData = encodeFunctionData({
+        abi: TIMELOCK_VAULT_ABI,
+        functionName: 'claimStreamingTranches',
+        args: [vaultId as `0x${string}`],
+      });
+
+      const claimTx = {
+        from: activeAddress,
+        to: getAddress(timelockVaultAddress),
+        data: claimData,
+        value: '0x0',
+      } as const;
+
+      await simulateTransaction(activeProvider, claimTx, 'Claim matured tranches');
+
+      showNotification('Submitting tranche claim...', 'info');
+      const claimHash = (await activeProvider.request({
+        method: 'eth_sendTransaction',
+        params: [claimTx],
+      })) as `0x${string}`;
+
+      await waitForTransactionReceipt(activeProvider, claimHash, 'Claim matured tranches');
+
+      return vaultService.claimTranches(vaultId, claimHash);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['vault', vaultId] });
+      showNotification('Matured tranches claimed!', 'success');
+    },
+    onError: (error: any) =>
+      showNotification(getTransactionErrorMessage(error, 'Failed to claim tranches'), 'error'),
+  });
+
   if (isLoading) {
     return (
       <div className="py-12 text-center">
@@ -935,6 +1358,117 @@ export default function VaultDetailsPage() {
           </div>
         </div>
       </div>
+
+      {onChainInfo?.vault && (onChainInfo.vault.conditionOracle.toLowerCase() !== ZERO_ADDRESS || onChainInfo.vault.treasuryBalanceCheck.toLowerCase() !== ZERO_ADDRESS) && (
+        <div className="card">
+          <h2 className="mb-4 text-xl font-bold text-light">Unlock Condition Status</h2>
+          <div className="space-y-4">
+            {onChainInfo.vault.conditionOracle.toLowerCase() !== ZERO_ADDRESS && (
+              <div className="flex items-center justify-between rounded-lg border border-primary/20 bg-dark/30 p-4">
+                <div>
+                  <div className="font-semibold text-light">{conditionOracleLabel(onChainInfo.vault.conditionOracle)}</div>
+                  <div className="text-sm text-light/60">
+                    Price must be {onChainInfo.vault.conditionAbove ? '>=' : '<='} {onChainInfo.vault.conditionThreshold.toString()}
+                    {onChainInfo.oraclePrice !== null && ` (current: ${onChainInfo.oraclePrice.toString()})`}
+                  </div>
+                </div>
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-bold ${
+                    onChainInfo.oraclePrice !== null &&
+                    (onChainInfo.vault.conditionAbove
+                      ? onChainInfo.oraclePrice >= onChainInfo.vault.conditionThreshold
+                      : onChainInfo.oraclePrice <= onChainInfo.vault.conditionThreshold)
+                      ? 'bg-green-500/20 text-green-400'
+                      : 'bg-yellow-500/20 text-yellow-300'
+                  }`}
+                >
+                  {onChainInfo.oraclePrice !== null &&
+                  (onChainInfo.vault.conditionAbove
+                    ? onChainInfo.oraclePrice >= onChainInfo.vault.conditionThreshold
+                    : onChainInfo.oraclePrice <= onChainInfo.vault.conditionThreshold)
+                    ? 'Met'
+                    : 'Not met'}
+                </span>
+              </div>
+            )}
+
+            {onChainInfo.vault.treasuryBalanceCheck.toLowerCase() !== ZERO_ADDRESS && (
+              <div className="flex items-center justify-between rounded-lg border border-primary/20 bg-dark/30 p-4">
+                <div>
+                  <div className="font-semibold text-light">Treasury balance guard</div>
+                  <div className="text-sm text-light/60">
+                    Treasury must hold {formatUnits(onChainInfo.vault.treasuryBalanceThreshold, 6)} USDC
+                    {onChainInfo.treasuryBalance !== null && ` (current: ${formatUnits(onChainInfo.treasuryBalance, 6)} USDC)`}
+                  </div>
+                </div>
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-bold ${
+                    onChainInfo.treasuryBalance !== null && onChainInfo.treasuryBalance >= onChainInfo.vault.treasuryBalanceThreshold
+                      ? 'bg-green-500/20 text-green-400'
+                      : 'bg-yellow-500/20 text-yellow-300'
+                  }`}
+                >
+                  {onChainInfo.treasuryBalance !== null && onChainInfo.treasuryBalance >= onChainInfo.vault.treasuryBalanceThreshold
+                    ? 'Met'
+                    : 'Not met'}
+                </span>
+              </div>
+            )}
+          </div>
+          <p className="mt-4 text-xs text-light/50">
+            Claiming still also requires the time-lock to have matured. All configured conditions are AND'd together.
+          </p>
+        </div>
+      )}
+
+      {onChainInfo && address?.toLowerCase() === vault.owner?.toLowerCase() && (
+        <div className="card">
+          <h2 className="mb-2 text-xl font-bold text-light">Delegate to Autonomous Agent</h2>
+          <p className="mb-4 text-sm text-light/60">
+            Authorize the CHRONOS vault-maintenance agent to call claimVault() on your behalf once
+            this vault matures. Funds always go to you; the agent only earns a small
+            {' '}{(onChainInfo.agentFeeBps / 100).toFixed(2)}% fee on delegate-triggered claims.
+          </p>
+
+          <div className="mb-4 flex items-center justify-between rounded-lg border border-primary/20 bg-dark/30 p-4">
+            <div>
+              <div className="text-sm text-light/60">Current delegate</div>
+              <div className="font-mono text-sm text-light">
+                {onChainInfo.delegate.toLowerCase() === ZERO_ADDRESS ? 'None' : onChainInfo.delegate}
+              </div>
+            </div>
+            {onChainInfo.delegate.toLowerCase() === ZERO_ADDRESS ? (
+              <span className="rounded-full bg-light/10 px-3 py-1 text-xs font-bold text-light/60">Not delegated</span>
+            ) : (
+              <span className="rounded-full bg-primary/20 px-3 py-1 text-xs font-bold text-primary">Active</span>
+            )}
+          </div>
+
+          {onChainInfo.delegate.toLowerCase() === ZERO_ADDRESS ? (
+            <button
+              type="button"
+              disabled={delegateMutation.isPending || !agentAddressData?.address}
+              onClick={() => agentAddressData?.address && delegateMutation.mutate(agentAddressData.address)}
+              className="rounded-lg bg-primary px-4 py-2 font-bold text-dark transition-colors hover:bg-primary/90 disabled:opacity-50"
+            >
+              {delegateMutation.isPending
+                ? 'Confirm in wallet...'
+                : agentAddressData?.address
+                  ? 'Delegate to Agent'
+                  : 'Agent address unavailable'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={delegateMutation.isPending}
+              onClick={() => delegateMutation.mutate(ZERO_ADDRESS)}
+              className="rounded-lg border border-primary/40 px-4 py-2 font-bold text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
+            >
+              {delegateMutation.isPending ? 'Confirm in wallet...' : 'Revoke Delegate'}
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="card">
         <div className="mb-6 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
@@ -1166,6 +1700,96 @@ export default function VaultDetailsPage() {
               </button>
             </div>
           )}
+
+          {canBorrow && (
+            <div className="card">
+              <h3 className="mb-4 text-lg font-bold text-light">Borrow Against This Vault</h3>
+              <p className="mb-4 text-sm text-light/60">
+                Lock this vault as collateral and borrow USDC from the CreditLine pool, up to{' '}
+                <span className="text-primary">50% LTV</span>.
+              </p>
+              <div className="mb-2 flex items-center justify-between text-xs text-light/60">
+                <span>Max borrowable</span>
+                <span className="font-mono text-primary">{formatUsdAmount(maxBorrowableAmount)}</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max={maxBorrowableAmount || 0}
+                step="0.01"
+                value={borrowAmount || '0'}
+                onChange={(e) => setBorrowAmount(e.target.value)}
+                className="mb-3 w-full accent-primary"
+                disabled={borrowMutation.isPending || maxBorrowableAmount <= 0}
+              />
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                max={maxBorrowableAmount}
+                value={borrowAmount}
+                onChange={(e) => setBorrowAmount(e.target.value)}
+                placeholder="Amount to borrow"
+                className="input-field mb-2"
+                disabled={borrowMutation.isPending || maxBorrowableAmount <= 0}
+              />
+              {borrowAmount && (
+                <div className="mb-4 text-xs text-light/60">
+                  Current LTV:{' '}
+                  <span className="font-mono text-primary">
+                    {maxBorrowableAmount > 0
+                      ? `${Math.min(((parseFloat(borrowAmount) || 0) / (maxBorrowableAmount * 2)) * 100, 50).toFixed(1)}%`
+                      : '0%'}
+                  </span>{' '}
+                  (cap 50%)
+                </div>
+              )}
+              <button
+                onClick={() => borrowMutation.mutate()}
+                disabled={
+                  !borrowAmount ||
+                  parseFloat(borrowAmount) <= 0 ||
+                  parseFloat(borrowAmount) > maxBorrowableAmount ||
+                  borrowMutation.isPending
+                }
+                className="w-full rounded-lg bg-primary px-4 py-3 font-bold text-dark transition-colors hover:bg-primary/90 disabled:opacity-50"
+              >
+                {borrowMutation.isPending ? 'Borrowing...' : 'Borrow USDC'}
+              </button>
+            </div>
+          )}
+
+          {hasActiveLoan && creditLineStatus && (
+            <div className="card">
+              <h3 className="mb-4 text-lg font-bold text-light">Repay Loan</h3>
+              <p className="mb-4 text-sm text-light/60">
+                Repay in full before maturity to unlock this vault&apos;s collateral.
+              </p>
+              <div className="mb-2 grid grid-cols-2 gap-3 text-sm">
+                <div className="rounded-lg border border-primary/10 bg-dark/20 p-3">
+                  <div className="text-xs text-light/60">Principal</div>
+                  <div className="font-mono text-primary">{formatUsdAmount(parseFloat(creditLineStatus.principal))}</div>
+                </div>
+                <div className="rounded-lg border border-primary/10 bg-dark/20 p-3">
+                  <div className="text-xs text-light/60">Interest owed</div>
+                  <div className="font-mono text-primary">{formatUsdAmount(parseFloat(creditLineStatus.interestOwed))}</div>
+                </div>
+              </div>
+              <div className="mb-4 mt-3 rounded-lg border border-primary/20 bg-dark/30 p-3">
+                <div className="text-xs text-light/60">Total owed</div>
+                <div className="font-mono text-xl font-bold text-primary">
+                  {formatUsdAmount(parseFloat(creditLineStatus.totalOwed))}
+                </div>
+              </div>
+              <button
+                onClick={() => repayMutation.mutate()}
+                disabled={repayMutation.isPending}
+                className="w-full rounded-lg bg-accent px-4 py-3 font-bold text-dark transition-colors hover:bg-accent/90 disabled:opacity-50"
+              >
+                {repayMutation.isPending ? 'Repaying...' : 'Approve & Repay'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1261,6 +1885,97 @@ export default function VaultDetailsPage() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {vault.splitAllocation && (
+        <div className="card">
+          <h3 className="mb-2 text-lg font-bold text-light">Smart Split Buckets</h3>
+          <p className="mb-6 text-sm text-light/60">
+            This vault auto-allocated its deposit into three buckets at creation. Each can be claimed independently once the vault is mature.
+          </p>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {(['savings', 'yield', 'reserve'] as const).map((bucket) => {
+              const info = vault.splitAllocation!.buckets[bucket];
+              const bpsKey = `${bucket}Bps` as 'savingsBps' | 'yieldBps' | 'reserveBps';
+              const canClaim =
+                Math.floor(Date.now() / 1000) >= vault.unlockAt &&
+                !info.claimed &&
+                vault.status !== 'CLAIMED';
+
+              return (
+                <div key={bucket} className="rounded-lg border border-primary/20 bg-dark/30 p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold capitalize text-light">{bucket}</div>
+                    <div className="text-xs text-light/50">{(vault.splitAllocation![bpsKey] / 100).toFixed(1)}%</div>
+                  </div>
+                  <div className="mt-2 font-mono text-xl font-bold text-primary">{formatUsdAmount(info.amount)}</div>
+                  {info.claimed ? (
+                    <div className="mt-3 rounded bg-green-500/15 px-2 py-1 text-center text-xs text-green-300">Claimed</div>
+                  ) : (
+                    <button
+                      onClick={() => claimBucketMutation.mutate(bucket)}
+                      disabled={!canClaim || claimBucketMutation.isPending}
+                      className="mt-3 w-full rounded-lg bg-primary px-3 py-2 text-sm font-bold text-dark transition-colors hover:bg-primary/90 disabled:opacity-50"
+                    >
+                      {claimBucketMutation.isPending ? 'Claiming...' : canClaim ? 'Claim' : 'Not mature yet'}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {vault.streamingAllocation && (
+        <div className="card">
+          <h3 className="mb-2 text-lg font-bold text-light">Streaming Release Schedule</h3>
+          <p className="mb-6 text-sm text-light/60">
+            This vault releases its deposit over {vault.streamingAllocation.numTranches} equal tranches, one every{' '}
+            {Math.round(vault.streamingAllocation.intervalSeconds / 60)} minutes.
+          </p>
+
+          <div className="mb-6 space-y-2">
+            {vault.streamingAllocation.tranches.map((tranche) => (
+              <div
+                key={tranche.index}
+                className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-3 rounded-lg border border-primary/10 bg-dark/20 p-3"
+              >
+                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">
+                  {tranche.index + 1}
+                </div>
+                <div className="text-sm text-light/60">
+                  Matures {new Date(tranche.maturesAt * 1000).toLocaleString()}
+                </div>
+                <div className="font-mono text-sm font-bold text-primary">{formatUsdAmount(tranche.amount)}</div>
+                <div className="text-xs">
+                  {tranche.claimed ? (
+                    <span className="rounded bg-green-500/15 px-2 py-1 text-green-300">Claimed</span>
+                  ) : tranche.matured ? (
+                    <span className="rounded bg-yellow-500/15 px-2 py-1 text-yellow-300">Ready</span>
+                  ) : (
+                    <span className="rounded bg-primary/10 px-2 py-1 text-light/50">Pending</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <button
+            onClick={() => claimTranchesMutation.mutate()}
+            disabled={
+              claimTranchesMutation.isPending ||
+              vault.streamingAllocation.maturedTranches <= vault.streamingAllocation.claimedTranches
+            }
+            className="w-full rounded-lg bg-primary px-4 py-3 font-bold text-dark transition-colors hover:bg-primary/90 disabled:opacity-50"
+          >
+            {claimTranchesMutation.isPending
+              ? 'Claiming...'
+              : vault.streamingAllocation.maturedTranches > vault.streamingAllocation.claimedTranches
+                ? `Claim ${vault.streamingAllocation.maturedTranches - vault.streamingAllocation.claimedTranches} matured tranche(s)`
+                : 'No new tranches matured yet'}
+          </button>
         </div>
       )}
 

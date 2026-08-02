@@ -48,9 +48,21 @@ export default function VaultCard({ vault }: VaultCardProps) {
               <VaultTypeIcon className="h-5 w-5 text-primary" />
               <span className="text-light/60 text-sm font-medium">{vault.vaultType} Vault</span>
             </div>
-            <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${statusColors[vault.status]}`}>
-              <StatusIcon className="h-3.5 w-3.5" />
-              {vault.status}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${statusColors[vault.status]}`}>
+                <StatusIcon className="h-3.5 w-3.5" />
+                {vault.status}
+              </div>
+              {vault.is_split && (
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-accent/20 text-accent">
+                  Smart Split
+                </span>
+              )}
+              {vault.is_streaming && (
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-accent/20 text-accent">
+                  Streaming
+                </span>
+              )}
             </div>
           </div>
           <div className="text-3xl font-bold text-primary">

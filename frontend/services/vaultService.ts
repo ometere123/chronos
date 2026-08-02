@@ -38,6 +38,10 @@ const toCamelCaseVault = (vault: any): Vault => ({
   bridgeTxHash: vault.bridge_tx_hash ?? vault.bridgeTxHash ?? undefined,
   createdOnChainTx: vault.created_on_chain_tx ?? vault.createdOnChainTx ?? undefined,
   claimed_tx_hash: vault.claimed_tx_hash ?? vault.claimedTxHash ?? undefined,
+  is_split: Boolean(vault.is_split ?? vault.isSplit ?? false),
+  is_streaming: Boolean(vault.is_streaming ?? vault.isStreaming ?? false),
+  splitAllocation: vault.splitAllocation ?? null,
+  streamingAllocation: vault.streamingAllocation ?? null,
 });
 
 export const toCamelCaseBridgeTx = (tx: any): BridgeTransaction => ({
@@ -110,7 +114,12 @@ export const vaultService = {
     sourceTxHash?: string,
     cctpBurnAmount?: string,
     cctpMaxFeeAmount?: string,
-    cctpFinalityThreshold?: number
+    cctpFinalityThreshold?: number,
+    extras?: {
+      condition?: Record<string, unknown>;
+      splitConfig?: { savingsBps: number; yieldBps: number; reserveBps: number };
+      streamingConfig?: { numTranches: number; intervalSeconds: number };
+    }
   ) {
     const response = await apiClient.post('/vaults/create', {
       amount,
@@ -125,6 +134,9 @@ export const vaultService = {
       cctpBurnAmount,
       cctpMaxFeeAmount,
       cctpFinalityThreshold,
+      condition: extras?.condition,
+      splitConfig: extras?.splitConfig,
+      streamingConfig: extras?.streamingConfig,
     });
     return response.data;
   },
@@ -142,7 +154,26 @@ export const vaultService = {
         bridgeTxHash: deposit.bridge_tx_hash ?? deposit.bridgeTxHash ?? undefined,
       })),
       bridgeTransactions: (vault.bridgeTransactions ?? []).map(toCamelCaseBridgeTx),
+      splitAllocation: vault.splitAllocation ?? null,
+      streamingAllocation: vault.streamingAllocation ?? null,
     } as Vault;
+  },
+
+  // Record a split-vault bucket claim after the on-chain claimBucket() tx has confirmed
+  async claimBucket(vaultId: string, bucket: 'savings' | 'yield' | 'reserve', claimTxHash: string) {
+    const response = await apiClient.post(`/vaults/${vaultId}/claim-bucket`, {
+      bucket,
+      claimTxHash,
+    });
+    return response.data;
+  },
+
+  // Record a streaming-vault tranche claim after the on-chain claimStreamingTranches() tx has confirmed
+  async claimTranches(vaultId: string, claimTxHash: string) {
+    const response = await apiClient.post(`/vaults/${vaultId}/claim-tranches`, {
+      claimTxHash,
+    });
+    return response.data;
   },
 
   // Get user's vaults

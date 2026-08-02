@@ -4,10 +4,10 @@ import { ReactNode, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Header from '@/components/layout/Header';
-import { useInjectedWallet } from '@/hooks/useInjectedWallet';
+import { useWallet } from '@/hooks/useWallet';
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
-  const { isConnected, isReady } = useInjectedWallet();
+  const { isConnected, isReady } = useWallet();
   const router = useRouter();
 
   useEffect(() => {
@@ -48,6 +48,18 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
               className="block px-4 py-3 rounded-lg text-light hover:bg-primary/10 transition-colors"
             >
               Proof of Reserves
+            </Link>
+            <Link
+              href="/dashboard/treasury-payments"
+              className="block px-4 py-3 rounded-lg text-light hover:bg-primary/10 transition-colors"
+            >
+              Treasury Payments
+            </Link>
+            <Link
+              href="/dashboard/lend"
+              className="block px-4 py-3 rounded-lg text-light hover:bg-primary/10 transition-colors"
+            >
+              Lend USDC
             </Link>
             <Link
               href="/dashboard/activity"

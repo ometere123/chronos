@@ -76,6 +76,190 @@ export const TIMELOCK_VAULT_ABI = [
     ],
     outputs: [],
   },
+  {
+    type: 'function',
+    name: 'setVaultDelegate',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'vaultId', type: 'bytes32' },
+      { name: 'delegate', type: 'address' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'claimBucket',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'vaultId', type: 'bytes32' },
+      { name: 'bucket', type: 'uint8' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'claimStreamingTranches',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'vaultId', type: 'bytes32' }],
+    outputs: [],
+  },
+] as const;
+
+// Bucket enum ordering from TimeLockVault.sol: SAVINGS=0, YIELD=1, RESERVE=2
+export const SPLIT_BUCKET_INDEX = {
+  savings: 0,
+  yield: 1,
+  reserve: 2,
+} as const;
+
+export type SplitBucketName = keyof typeof SPLIT_BUCKET_INDEX;
+
+// Read-only ABI for the oracle-gated unlock condition + agent-delegate fields (Items 5/6/14/15).
+// Used by the vault detail page to show live condition status directly from the chain, and by
+// the create-vault wizard's condition preview - independent of the (backend-relayer-only) vault
+// creation write path.
+export const TIMELOCK_VAULT_VIEW_ABI = [
+  {
+    type: 'function',
+    name: 'getVault',
+    stateMutability: 'view',
+    inputs: [{ name: 'vaultId', type: 'bytes32' }],
+    outputs: [
+      {
+        type: 'tuple',
+        components: [
+          { name: 'vaultId', type: 'bytes32' },
+          { name: 'owner', type: 'address' },
+          { name: 'totalAmount', type: 'uint256' },
+          { name: 'createdAt', type: 'uint256' },
+          { name: 'unlockAt', type: 'uint256' },
+          { name: 'sourceChain', type: 'uint32' },
+          { name: 'bridgeProtocol', type: 'uint8' },
+          { name: 'tokenAddress', type: 'address' },
+          { name: 'vaultType', type: 'uint8' },
+          { name: 'status', type: 'uint8' },
+          { name: 'bridgeTxHash', type: 'bytes32' },
+          { name: 'conditionOracle', type: 'address' },
+          { name: 'conditionThreshold', type: 'uint256' },
+          { name: 'conditionAbove', type: 'bool' },
+          { name: 'treasuryBalanceCheck', type: 'address' },
+          { name: 'treasuryBalanceThreshold', type: 'uint256' },
+          { name: 'numTranches', type: 'uint32' },
+          { name: 'claimedTranches', type: 'uint32' },
+          { name: 'intervalSeconds', type: 'uint256' },
+        ],
+      },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'conditionsMet',
+    stateMutability: 'view',
+    inputs: [{ name: 'vaultId', type: 'bytes32' }],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+  {
+    type: 'function',
+    name: 'vaultDelegate',
+    stateMutability: 'view',
+    inputs: [{ name: 'vaultId', type: 'bytes32' }],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'agentFeeBps',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint16' }],
+  },
+] as const;
+
+export const PRICE_ORACLE_ABI = [
+  {
+    type: 'function',
+    name: 'getPrice',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const;
+
+/// Read-only eth_call against a public RPC endpoint, independent of any connected wallet. Used
+/// for showing on-chain oracle-condition/delegate status on the vault detail page without
+/// requiring the viewer to have a wallet connected or be on the Arc network in their wallet.
+export async function publicEthCall(rpcUrl: string, to: `0x${string}`, data: `0x${string}`) {
+  const response = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'eth_call',
+      params: [{ to, data }, 'latest'],
+    }),
+  });
+
+  const json = await response.json();
+  if (json.error) {
+    throw new Error(json.error.message || 'RPC call failed');
+  }
+
+  return json.result as `0x${string}`;
+}
+
+export const CREDIT_LINE_ABI = [
+  {
+    type: 'function',
+    name: 'borrow',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'vaultId', type: 'bytes32' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'repay',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'vaultId', type: 'bytes32' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'liquidate',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'vaultId', type: 'bytes32' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'depositLiquidity',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'amount', type: 'uint256' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'withdrawLiquidity',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'amount', type: 'uint256' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'maxBorrowable',
+    stateMutability: 'view',
+    inputs: [{ name: 'vaultId', type: 'bytes32' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'totalOwed',
+    stateMutability: 'view',
+    inputs: [{ name: 'vaultId', type: 'bytes32' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
 ] as const;
 
 export function toBytes32Address(address: string) {
@@ -124,10 +308,21 @@ export async function waitForTransactionReceipt(
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
-    const receipt = await walletProvider.request<any>({
-      method: 'eth_getTransactionReceipt',
-      params: [hash],
-    });
+    let receipt: any = null;
+    try {
+      receipt = await walletProvider.request<any>({
+        method: 'eth_getTransactionReceipt',
+        params: [hash],
+      });
+    } catch (error) {
+      // A single flaky RPC response mid-poll (e.g. "could not coalesce error") shouldn't abort
+      // the whole wait - the transaction itself already broadcast successfully and will still
+      // confirm. Only a real timeout below should be treated as fatal.
+      console.warn(
+        `[wallet] Transient error polling for ${label} receipt; retrying.`,
+        getTransactionErrorLog(error, `${label} receipt poll failed`)
+      );
+    }
 
     if (receipt) {
       if (receipt.status && receipt.status !== '0x1') {

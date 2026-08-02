@@ -10,8 +10,9 @@ export default function VaultStepper({ currentStep, totalSteps }: VaultStepperPr
     { number: 1, label: 'Source Chain' },
     { number: 2, label: 'Amount & Duration' },
     { number: 3, label: 'Vault Type' },
-    { number: 4, label: 'Review' },
-    { number: 5, label: 'Confirm' },
+    { number: 4, label: 'Unlock & Smart Features' },
+    { number: 5, label: 'Review' },
+    { number: 6, label: 'Confirm' },
   ];
   const steps = createVaultSteps.slice(0, totalSteps);
 

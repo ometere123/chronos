@@ -4,12 +4,13 @@ import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { encodeFunctionData, formatUnits, parseUnits, getAddress } from 'viem';
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import VaultStepper from '@/components/ui/VaultStepper';
 import { vaultService } from '@/services/vaultService';
 import { CONTRACT_ADDRESSES, DURATION_PRESETS, MIN_DURATION, MAX_DURATION } from '@/config/constants';
 import { ARC_CCTP_DOMAIN, CHAINS, SOURCE_CHAINS, CANONICAL_CHAIN } from '@/config/chains';
 import { useUIStore } from '@/store/uiStore';
-import { useInjectedWallet } from '@/hooks/useInjectedWallet';
+import { useWallet } from '@/hooks/useWallet';
 import {
   CCTP_FAST_FINALITY_THRESHOLD,
   CCTP_STANDARD_FINALITY_THRESHOLD,
@@ -17,6 +18,7 @@ import {
   ERC20_APPROVE_ABI,
   ZERO_BYTES32,
   assertContractCode,
+  getErc20Allowance,
   getTransactionErrorLog,
   getTransactionErrorMessage,
   simulateTransaction,
@@ -35,7 +37,25 @@ import {
   SparklesIcon,
 } from '@/components/ui/Icons';
 
-type Step = 1 | 2 | 3 | 4 | 5;
+type Step = 1 | 2 | 3 | 4 | 5 | 6;
+
+interface ConditionData {
+  enabled: boolean;
+  oracleType: 'mock' | 'band' | '';
+  threshold: string;
+  above: boolean;
+  useTreasuryCheck: boolean;
+  treasuryThreshold: string;
+}
+
+type SmartFeature = 'NONE' | 'SPLIT' | 'STREAMING';
+
+const STREAMING_PRESETS = [
+  { label: '4 tranches, monthly', numTranches: 4, intervalSeconds: 30 * 24 * 60 * 60 },
+  { label: '12 tranches, monthly', numTranches: 12, intervalSeconds: 30 * 24 * 60 * 60 },
+  { label: '7 tranches, daily', numTranches: 7, intervalSeconds: 24 * 60 * 60 },
+  { label: '4 tranches, weekly', numTranches: 4, intervalSeconds: 7 * 24 * 60 * 60 },
+];
 
 interface FormData {
   sourceChain: number;
@@ -47,6 +67,13 @@ interface FormData {
   destinationChain: number;
   bridgeProtocol: 'CCTP';
   tokenAddress: string;
+  condition: ConditionData;
+  smartFeature: SmartFeature;
+  savingsBps: number;
+  yieldBps: number;
+  reserveBps: number;
+  numTranches: number;
+  intervalSeconds: number;
 }
 
 interface PendingCreateRecovery {
@@ -63,7 +90,19 @@ interface PendingCreateRecovery {
   cctpMaxFeeAmount: string;
   cctpFinalityThreshold: number;
   createdAt: number;
+  condition?: ConditionData;
+  splitConfig?: { savingsBps: number; yieldBps: number; reserveBps: number };
+  streamingConfig?: { numTranches: number; intervalSeconds: number };
 }
+
+const initialCondition: ConditionData = {
+  enabled: false,
+  oracleType: '',
+  threshold: '',
+  above: true,
+  useTreasuryCheck: false,
+  treasuryThreshold: '',
+};
 
 const initialFormData: FormData = {
   sourceChain: 84532,
@@ -75,7 +114,45 @@ const initialFormData: FormData = {
   destinationChain: CANONICAL_CHAIN,
   bridgeProtocol: 'CCTP',
   tokenAddress: CHAINS[84532].usdc,
+  condition: initialCondition,
+  smartFeature: 'NONE',
+  savingsBps: 5000,
+  yieldBps: 3000,
+  reserveBps: 2000,
+  numTranches: STREAMING_PRESETS[0].numTranches,
+  intervalSeconds: STREAMING_PRESETS[0].intervalSeconds,
 };
+
+const SPLIT_PIE_COLORS = ['#22d3ee', '#a78bfa', '#fbbf24'];
+
+function conditionPayload(condition: ConditionData) {
+  if (!condition.enabled || (!condition.oracleType && !condition.useTreasuryCheck)) {
+    return undefined;
+  }
+
+  return {
+    oracleType: condition.oracleType || undefined,
+    threshold: condition.oracleType ? condition.threshold || '0' : undefined,
+    above: condition.above,
+    useTreasuryCheck: condition.useTreasuryCheck,
+    treasuryThreshold: condition.useTreasuryCheck ? condition.treasuryThreshold || '0' : undefined,
+  };
+}
+
+function buildSplitConfig(formData: FormData) {
+  return {
+    savingsBps: formData.savingsBps,
+    yieldBps: formData.yieldBps,
+    reserveBps: formData.reserveBps,
+  };
+}
+
+function buildStreamingConfig(formData: FormData) {
+  return {
+    numTranches: formData.numTranches,
+    intervalSeconds: formData.intervalSeconds,
+  };
+}
 
 function formatDuration(durationMs: number) {
   const minutes = durationMs / (60 * 1000);
@@ -99,7 +176,7 @@ function recoveryStorageKey(address?: string) {
 
 export default function CreateVaultPage() {
   const router = useRouter();
-  const { address, provider, connect, switchChain } = useInjectedWallet();
+  const { address, getProvider, connect, switchChain } = useWallet();
   const { showNotification } = useUIStore();
 
   const [currentStep, setCurrentStep] = useState<Step>(1);
@@ -164,12 +241,9 @@ export default function CreateVaultPage() {
     mutationFn: async () => {
       console.log('[create-vault] Starting vault creation...', { formData, walletAddress });
 
-      let activeAddress = walletAddress;
+      const activeAddress = walletAddress;
       if (!activeAddress) {
-        activeAddress = await connect();
-      }
-
-      if (!activeAddress) {
+        connect();
         throw new Error('No wallet connected. Please connect a wallet first.');
       }
 
@@ -179,11 +253,6 @@ export default function CreateVaultPage() {
           preflight.arcSettlement.reason ||
             'Arc settlement is not ready. Redeploy or reconfigure the Arc contracts before creating a vault.'
         );
-      }
-
-      const activeProvider = window.ethereum;
-      if (!activeProvider) {
-        throw new Error('No injected wallet provider found.');
       }
 
       const sourceConfig = CHAINS[formData.sourceChain];
@@ -216,9 +285,16 @@ export default function CreateVaultPage() {
       const lockAmountUnits = parseUnits(formData.amount, 6);
       const mintRecipient = toBytes32Address(normalizedTimelockVault);
 
-      // Switch chain on the injected wallet before source-chain transactions.
+      // Privy providers are bound to the wallet's active chain. Switch first, then
+      // acquire a fresh EIP-1193 provider for source-chain transactions.
       console.log('[create-vault] Switching chain to:', formData.sourceChain);
       await switchChain(formData.sourceChain);
+
+      const activeProvider = await getProvider();
+      if (!activeProvider) {
+        throw new Error('No wallet provider found.');
+      }
+
       await waitForWalletChain(activeProvider, formData.sourceChain, sourceConfig.name);
       await assertContractCode(activeProvider, tokenAddress, `${sourceConfig.name} USDC`);
       await assertContractCode(activeProvider, cctpTokenMessenger, `${sourceConfig.name} CCTP TokenMessenger`);
@@ -246,36 +322,45 @@ export default function CreateVaultPage() {
       const burnAmountUnits = lockAmountUnits + maxFeeAmount;
       const burnAmount = formatUnits(burnAmountUnits, 6);
 
-      showNotification('Approving USDC on the source chain...', 'info');
-      const approveData = encodeFunctionData({
-        abi: ERC20_APPROVE_ABI,
-        functionName: 'approve',
-        args: [cctpTokenMessenger, burnAmountUnits],
-      });
-
-      const approveTx = {
-        from: activeAddress,
-        to: tokenAddress,
-        data: approveData,
-        value: '0x0',
-      } as const;
-
-      await simulateTransaction(activeProvider, approveTx, 'USDC approval');
-
-      const approveHash = (await activeProvider.request({
-        method: 'eth_sendTransaction',
-        params: [approveTx],
-      })) as `0x${string}`;
-
-      console.log('[create-vault] Approve tx sent:', approveHash);
-      await waitForTransactionReceipt(activeProvider, approveHash, 'USDC approval');
-      await waitForErc20Allowance(
+      const currentAllowance = await getErc20Allowance(
         activeProvider,
         activeAddress,
         tokenAddress,
-        cctpTokenMessenger,
-        burnAmountUnits
+        cctpTokenMessenger
       );
+
+      if (currentAllowance < burnAmountUnits) {
+        showNotification('Approving USDC on the source chain...', 'info');
+        const approveData = encodeFunctionData({
+          abi: ERC20_APPROVE_ABI,
+          functionName: 'approve',
+          args: [cctpTokenMessenger, burnAmountUnits],
+        });
+
+        const approveTx = {
+          from: activeAddress,
+          to: tokenAddress,
+          data: approveData,
+          value: '0x0',
+        } as const;
+
+        await simulateTransaction(activeProvider, approveTx, 'USDC approval');
+
+        const approveHash = (await activeProvider.request({
+          method: 'eth_sendTransaction',
+          params: [approveTx],
+        })) as `0x${string}`;
+
+        console.log('[create-vault] Approve tx sent:', approveHash);
+        await waitForTransactionReceipt(activeProvider, approveHash, 'USDC approval');
+        await waitForErc20Allowance(
+          activeProvider,
+          activeAddress,
+          tokenAddress,
+          cctpTokenMessenger,
+          burnAmountUnits
+        );
+      }
 
       showNotification('Submitting CCTP bridge transaction...', 'info');
       const burnData = encodeFunctionData({
@@ -327,6 +412,9 @@ export default function CreateVaultPage() {
         cctpMaxFeeAmount: maxFeeAmount.toString(),
         cctpFinalityThreshold: finalityThreshold,
         createdAt: Date.now(),
+        condition: formData.condition,
+        splitConfig: formData.smartFeature === 'SPLIT' ? buildSplitConfig(formData) : undefined,
+        streamingConfig: formData.smartFeature === 'STREAMING' ? buildStreamingConfig(formData) : undefined,
       };
       savePendingRecovery(recoveryPayload);
 
@@ -343,7 +431,12 @@ export default function CreateVaultPage() {
         burnHash,
         burnAmount,
         maxFeeAmount.toString(),
-        finalityThreshold
+        finalityThreshold,
+        {
+          condition: conditionPayload(formData.condition),
+          splitConfig: formData.smartFeature === 'SPLIT' ? buildSplitConfig(formData) : undefined,
+          streamingConfig: formData.smartFeature === 'STREAMING' ? buildStreamingConfig(formData) : undefined,
+        }
       );
     },
     onSuccess: (data) => {
@@ -400,7 +493,12 @@ export default function CreateVaultPage() {
         recovery.sourceTxHash,
         recovery.cctpBurnAmount,
         recovery.cctpMaxFeeAmount,
-        recovery.cctpFinalityThreshold
+        recovery.cctpFinalityThreshold,
+        {
+          condition: recovery.condition ? conditionPayload(recovery.condition) : undefined,
+          splitConfig: recovery.splitConfig,
+          streamingConfig: recovery.streamingConfig,
+        }
       );
     },
     onSuccess: (data, recovery) => {
@@ -443,6 +541,8 @@ export default function CreateVaultPage() {
       cctpMaxFeeAmount: '0',
       cctpFinalityThreshold: CCTP_STANDARD_FINALITY_THRESHOLD,
       createdAt: Date.now(),
+      splitConfig: formData.smartFeature === 'SPLIT' ? buildSplitConfig(formData) : undefined,
+      streamingConfig: formData.smartFeature === 'STREAMING' ? buildStreamingConfig(formData) : undefined,
     };
 
     savePendingRecovery(recovery);
@@ -472,13 +572,30 @@ export default function CreateVaultPage() {
       }
     }
 
+    if (step === 4) {
+      if (formData.smartFeature === 'SPLIT') {
+        const sum = formData.savingsBps + formData.yieldBps + formData.reserveBps;
+        if (sum !== 10000) {
+          newErrors.split = `Savings + Yield + Reserve must sum to 100% (currently ${(sum / 100).toFixed(2)}%)`;
+        }
+      }
+      if (formData.smartFeature === 'STREAMING') {
+        if (!formData.numTranches || formData.numTranches < 2 || formData.numTranches > 60) {
+          newErrors.streaming = 'Number of tranches must be between 2 and 60';
+        }
+        if (!formData.intervalSeconds || formData.intervalSeconds <= 0) {
+          newErrors.streaming = 'Tranche interval must be greater than 0';
+        }
+      }
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const handleNext = () => {
     if (validateStep(currentStep)) {
-      if (currentStep < 5) {
+      if (currentStep < 6) {
         setCurrentStep((currentStep + 1) as Step);
       }
     }
@@ -495,7 +612,7 @@ export default function CreateVaultPage() {
     console.log('[create-vault] handleSubmit fired', {
       currentStep,
       walletAddress,
-      hasProvider: !!provider,
+      hasWallet: !!walletAddress,
       formData,
     });
 
@@ -504,7 +621,7 @@ export default function CreateVaultPage() {
       return;
     }
 
-    if (!walletAddress && !provider) {
+    if (!walletAddress) {
       console.warn('[create-vault] No wallet detected', { walletAddress });
       showNotification('No wallet connected. Please connect a wallet and try again.', 'error');
       return;
@@ -520,7 +637,7 @@ export default function CreateVaultPage() {
       <p className="text-light/60 mb-8">Lock your tokens for discipline. Choose your terms. Test mode currently allows 5-minute vaults.</p>
 
       <form onSubmit={handleSubmit}>
-        <VaultStepper currentStep={currentStep} totalSteps={5} />
+        <VaultStepper currentStep={currentStep} totalSteps={6} />
 
         {pendingRecovery && (
           <div className="card mb-6 border-yellow-500/30 bg-yellow-500/10">
@@ -711,10 +828,375 @@ export default function CreateVaultPage() {
           </div>
         )}
 
-        {/* Step 4: Review */}
+        {/* Step 4: Conditional Unlock (optional) + Smart Features (optional Smart Split or Streaming release) */}
+        {currentStep === 4 && (
+          <div className="card mb-8 space-y-6">
+            <div>
+              <h2 className="text-xl font-bold text-light mb-2">Step 4: Conditional Unlock (Optional)</h2>
+              <p className="text-light/60">
+                On top of the time lock, you can require an oracle price condition and/or a
+                treasury-balance guard before the vault can be claimed. Both are AND'd with the
+                time unlock and with each other.
+              </p>
+            </div>
+
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formData.condition.enabled}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    condition: { ...formData.condition, enabled: e.target.checked },
+                  })
+                }
+                className="w-5 h-5"
+              />
+              <span className="font-semibold text-light">Add an unlock condition</span>
+            </label>
+
+            {formData.condition.enabled && (
+              <div className="space-y-6 border-t border-primary/10 pt-6">
+                <div>
+                  <label className="block text-light font-semibold mb-2">Oracle price condition</label>
+                  <select
+                    value={formData.condition.oracleType}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        condition: { ...formData.condition, oracleType: e.target.value as ConditionData['oracleType'] },
+                      })
+                    }
+                    className="input-field mb-3"
+                  >
+                    <option value="">None</option>
+                    <option value="mock">Mock Price Oracle (demo, admin-settable)</option>
+                    <option value="band">Band Protocol (live Arc testnet feed, USDC/USD)</option>
+                  </select>
+
+                  {formData.condition.oracleType && (
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="block text-light/70 text-sm mb-1">
+                          Threshold (raw oracle units{formData.condition.oracleType === 'band' ? ', 18 decimals' : ''})
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.condition.threshold}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              condition: { ...formData.condition, threshold: e.target.value },
+                            })
+                          }
+                          placeholder="e.g. 100"
+                          className="input-field"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-light/70 text-sm mb-1">Direction</label>
+                        <select
+                          value={formData.condition.above ? 'above' : 'below'}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              condition: { ...formData.condition, above: e.target.value === 'above' },
+                            })
+                          }
+                          className="input-field"
+                        >
+                          <option value="above">Price must be &gt;= threshold</option>
+                          <option value="below">Price must be &lt;= threshold</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="flex items-center gap-3 cursor-pointer mb-3">
+                    <input
+                      type="checkbox"
+                      checked={formData.condition.useTreasuryCheck}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          condition: { ...formData.condition, useTreasuryCheck: e.target.checked },
+                        })
+                      }
+                      className="w-5 h-5"
+                    />
+                    <span className="font-semibold text-light">Require a minimum Treasury USDC balance</span>
+                  </label>
+
+                  {formData.condition.useTreasuryCheck && (
+                    <div>
+                      <label className="block text-light/70 text-sm mb-1">Minimum Treasury balance (USDC)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={formData.condition.treasuryThreshold}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            condition: { ...formData.condition, treasuryThreshold: e.target.value },
+                          })
+                        }
+                        placeholder="e.g. 1000"
+                        className="input-field"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4 text-sm text-light/70">
+                  Conditioned vaults are created via a backend-relayer write path (the deployed
+                  BridgeOrchestrator does not yet expose oracle/treasury params). This is a
+                  documented hackathon-timeline tradeoff - see arcSettlementService.settleVaultAdvanced.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Step 4b: Smart Features (optional) */}
         {currentStep === 4 && (
           <div className="card mb-8">
-            <h2 className="text-xl font-bold text-light mb-6">Step 4: Review Details</h2>
+            <h2 className="text-xl font-bold text-light mb-2">Smart Features</h2>
+            <p className="text-light/60 mb-6">
+              Optional. Choose at most one: auto-allocate the deposit into savings/yield/reserve buckets, or release it gradually over multiple tranches.
+            </p>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3 mb-6">
+              <label
+                className={`flex items-start gap-3 p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                  formData.smartFeature === 'NONE' ? 'border-primary/60 bg-primary/5' : 'border-primary/20 hover:bg-primary/5'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="smartFeature"
+                  value="NONE"
+                  checked={formData.smartFeature === 'NONE'}
+                  onChange={() => setFormData({ ...formData, smartFeature: 'NONE' })}
+                  className="w-4 h-4 mt-1"
+                />
+                <div>
+                  <div className="font-semibold text-light">Standard</div>
+                  <div className="text-xs text-light/60 mt-1">Single lump-sum unlock at maturity.</div>
+                </div>
+              </label>
+
+              <label
+                className={`flex items-start gap-3 p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                  formData.smartFeature === 'SPLIT' ? 'border-primary/60 bg-primary/5' : 'border-primary/20 hover:bg-primary/5'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="smartFeature"
+                  value="SPLIT"
+                  checked={formData.smartFeature === 'SPLIT'}
+                  onChange={() => setFormData({ ...formData, smartFeature: 'SPLIT' })}
+                  className="w-4 h-4 mt-1"
+                />
+                <div>
+                  <div className="font-semibold text-light">Smart Split</div>
+                  <div className="text-xs text-light/60 mt-1">Auto-allocate into savings / yield / reserve buckets, claimable separately at maturity.</div>
+                </div>
+              </label>
+
+              <label
+                className={`flex items-start gap-3 p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                  formData.smartFeature === 'STREAMING' ? 'border-primary/60 bg-primary/5' : 'border-primary/20 hover:bg-primary/5'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="smartFeature"
+                  value="STREAMING"
+                  checked={formData.smartFeature === 'STREAMING'}
+                  onChange={() => setFormData({ ...formData, smartFeature: 'STREAMING' })}
+                  className="w-4 h-4 mt-1"
+                />
+                <div>
+                  <div className="font-semibold text-light">Streaming Release</div>
+                  <div className="text-xs text-light/60 mt-1">Release the deposit gradually over N equal tranches at a fixed interval.</div>
+                </div>
+              </label>
+            </div>
+
+            {formData.smartFeature === 'SPLIT' && (
+              <div className="border border-primary/20 rounded-lg p-5">
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2 items-center">
+                  <div className="space-y-5">
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="text-light/70">Savings</span>
+                        <span className="font-mono text-primary">{(formData.savingsBps / 100).toFixed(1)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={10000}
+                        step={100}
+                        value={formData.savingsBps}
+                        onChange={(e) => {
+                          const savingsBps = parseInt(e.target.value, 10);
+                          const remaining = 10000 - savingsBps;
+                          const yieldShare = formData.yieldBps + formData.reserveBps || 1;
+                          const yieldBps = Math.round((remaining * formData.yieldBps) / yieldShare);
+                          const reserveBps = remaining - yieldBps;
+                          setFormData({ ...formData, savingsBps, yieldBps, reserveBps });
+                        }}
+                        className="w-full accent-[#22d3ee]"
+                      />
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="text-light/70">Yield</span>
+                        <span className="font-mono text-primary">{(formData.yieldBps / 100).toFixed(1)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={10000}
+                        step={100}
+                        value={formData.yieldBps}
+                        onChange={(e) => {
+                          const yieldBps = parseInt(e.target.value, 10);
+                          const remaining = 10000 - yieldBps;
+                          const otherShare = formData.savingsBps + formData.reserveBps || 1;
+                          const savingsBps = Math.round((remaining * formData.savingsBps) / otherShare);
+                          const reserveBps = remaining - savingsBps;
+                          setFormData({ ...formData, savingsBps, yieldBps, reserveBps });
+                        }}
+                        className="w-full accent-[#a78bfa]"
+                      />
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="text-light/70">Reserve</span>
+                        <span className="font-mono text-primary">{(formData.reserveBps / 100).toFixed(1)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={10000}
+                        step={100}
+                        value={formData.reserveBps}
+                        onChange={(e) => {
+                          const reserveBps = parseInt(e.target.value, 10);
+                          const remaining = 10000 - reserveBps;
+                          const otherShare = formData.savingsBps + formData.yieldBps || 1;
+                          const savingsBps = Math.round((remaining * formData.savingsBps) / otherShare);
+                          const yieldBps = remaining - savingsBps;
+                          setFormData({ ...formData, savingsBps, yieldBps, reserveBps });
+                        }}
+                        className="w-full accent-[#fbbf24]"
+                      />
+                    </div>
+                    <div className="text-xs text-light/50">
+                      Total: {((formData.savingsBps + formData.yieldBps + formData.reserveBps) / 100).toFixed(1)}% (must equal 100%)
+                    </div>
+                  </div>
+
+                  <div className="h-56">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={[
+                            { name: 'Savings', value: formData.savingsBps },
+                            { name: 'Yield', value: formData.yieldBps },
+                            { name: 'Reserve', value: formData.reserveBps },
+                          ]}
+                          dataKey="value"
+                          nameKey="name"
+                          innerRadius={50}
+                          outerRadius={80}
+                          paddingAngle={2}
+                        >
+                          {SPLIT_PIE_COLORS.map((color) => (
+                            <Cell key={color} fill={color} />
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={(value: number) => `${(value / 100).toFixed(1)}%`} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+                {errors.split && <div className="text-red-400 text-sm mt-4">{errors.split}</div>}
+              </div>
+            )}
+
+            {formData.smartFeature === 'STREAMING' && (
+              <div className="border border-primary/20 rounded-lg p-5 space-y-4">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {STREAMING_PRESETS.map((preset) => {
+                    const isSelected =
+                      formData.numTranches === preset.numTranches && formData.intervalSeconds === preset.intervalSeconds;
+                    return (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() =>
+                          setFormData({
+                            ...formData,
+                            numTranches: preset.numTranches,
+                            intervalSeconds: preset.intervalSeconds,
+                          })
+                        }
+                        className={`p-3 rounded-lg border text-left transition-colors ${
+                          isSelected
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-primary/20 text-light/70 hover:bg-primary/5'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="block text-light/70 text-sm mb-2">Number of tranches</label>
+                    <input
+                      type="number"
+                      min={2}
+                      max={60}
+                      value={formData.numTranches}
+                      onChange={(e) => setFormData({ ...formData, numTranches: parseInt(e.target.value, 10) || 0 })}
+                      className="input-field"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-light/70 text-sm mb-2">Interval between tranches (seconds)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={formData.intervalSeconds}
+                      onChange={(e) => setFormData({ ...formData, intervalSeconds: parseInt(e.target.value, 10) || 0 })}
+                      className="input-field"
+                    />
+                  </div>
+                </div>
+
+                <div className="text-xs text-light/50">
+                  Each tranche releases ~{(100 / (formData.numTranches || 1)).toFixed(2)}% of the deposit, roughly every{' '}
+                  {formatDuration(formData.intervalSeconds * 1000)}.
+                </div>
+                {errors.streaming && <div className="text-red-400 text-sm">{errors.streaming}</div>}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Step 5: Review */}
+        {currentStep === 5 && (
+          <div className="card mb-8">
+            <h2 className="text-xl font-bold text-light mb-6">Step 5: Review Details</h2>
 
             <div className="space-y-4">
               <div className="flex justify-between items-center py-3 border-b border-primary/10">
@@ -766,6 +1248,50 @@ export default function CreateVaultPage() {
                 <div className="font-semibold">{formData.bridgeProtocol}</div>
               </div>
 
+              <div className="flex justify-between items-center py-3 border-b border-primary/10">
+                <div className="text-light/60">Unlock Condition</div>
+                <div className="text-right font-semibold">
+                  {!formData.condition.enabled ? (
+                    <span className="text-light/50">None (time-lock only)</span>
+                  ) : (
+                    <div className="space-y-1 text-sm">
+                      {formData.condition.oracleType && (
+                        <div>
+                          {formData.condition.oracleType === 'mock' ? 'Mock Oracle' : 'Band Protocol'} price{' '}
+                          {formData.condition.above ? '>=' : '<='} {formData.condition.threshold || '0'}
+                        </div>
+                      )}
+                      {formData.condition.useTreasuryCheck && (
+                        <div>Treasury balance &gt;= ${formData.condition.treasuryThreshold || '0'}</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center py-3 border-b border-primary/10">
+                <div className="text-light/60">Smart Feature</div>
+                <div className="text-right">
+                  {formData.smartFeature === 'NONE' && <span className="font-semibold">Standard</span>}
+                  {formData.smartFeature === 'SPLIT' && (
+                    <div className="font-semibold">
+                      Smart Split
+                      <div className="text-xs text-light/50 font-normal mt-1">
+                        Savings {(formData.savingsBps / 100).toFixed(1)}% · Yield {(formData.yieldBps / 100).toFixed(1)}% · Reserve {(formData.reserveBps / 100).toFixed(1)}%
+                      </div>
+                    </div>
+                  )}
+                  {formData.smartFeature === 'STREAMING' && (
+                    <div className="font-semibold">
+                      Streaming Release
+                      <div className="text-xs text-light/50 font-normal mt-1">
+                        {formData.numTranches} tranches, every {formatDuration(formData.intervalSeconds * 1000)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="flex justify-between items-center py-3">
                 <div className="text-light/60">Fee</div>
                 <div className="font-semibold text-green-400">Free (Testnet)</div>
@@ -774,10 +1300,10 @@ export default function CreateVaultPage() {
           </div>
         )}
 
-        {/* Step 5: Confirm */}
-        {currentStep === 5 && (
+        {/* Step 6: Confirm */}
+        {currentStep === 6 && (
           <div className="card mb-8">
-            <h2 className="text-xl font-bold text-light mb-6">Step 5: Confirm & Create</h2>
+            <h2 className="text-xl font-bold text-light mb-6">Step 6: Confirm & Create</h2>
             <p className="text-light/70 mb-6">
               By clicking "Create Vault", you agree to lock your tokens on Arc Testnet according to the terms specified above.
               {formData.vaultType === 'FIXED' && ' FIXED vaults cannot be withdrawn from early.'}
@@ -833,7 +1359,7 @@ export default function CreateVaultPage() {
             </span>
           </button>
 
-          {currentStep < 5 ? (
+          {currentStep < 6 ? (
             <button
               type="button"
               onClick={handleNext}
