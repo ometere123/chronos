@@ -21,8 +21,9 @@ import {
   ZERO_BYTES32,
   getTransactionErrorLog,
   getTransactionErrorMessage,
-  publicEthCall,
+  publicMulticall,
   simulateTransaction,
+  type Multicall3Call,
   toBytes32Address,
   waitForErc20Allowance,
   waitForTransactionReceipt,
@@ -264,56 +265,76 @@ export default function VaultDetailsPage() {
       const rpcUrl = CHAINS[ARC_CHAIN_ID].rpc;
       const timelockVaultAddress = getAddress(CONTRACT_ADDRESSES.TIMELOCK_VAULT);
 
-      const getVaultResult = await publicEthCall(
-        rpcUrl,
-        timelockVaultAddress,
-        encodeFunctionData({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'getVault', args: [vaultId as `0x${string}`] })
-      );
-      const onChainVault = decodeFunctionResult({
-        abi: TIMELOCK_VAULT_VIEW_ABI,
-        functionName: 'getVault',
-        data: getVaultResult,
-      });
+      // Batch getVault/vaultDelegate/agentFeeBps into ONE eth_call via Multicall3 (deployed on
+      // Arc Testnet at the standard deterministic address) instead of 3 sequential requests -
+      // Arc's public RPC is rate-limited enough that every extra round-trip is another chance to
+      // hit it, and this cuts the common case (no condition set) from up to 5 requests to 1.
+      const [getVaultRes, delegateRes, feeRes] = await publicMulticall(rpcUrl, [
+        {
+          target: timelockVaultAddress,
+          allowFailure: false,
+          callData: encodeFunctionData({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'getVault', args: [vaultId as `0x${string}`] }),
+        },
+        {
+          target: timelockVaultAddress,
+          allowFailure: false,
+          callData: encodeFunctionData({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'vaultDelegate', args: [vaultId as `0x${string}`] }),
+        },
+        {
+          target: timelockVaultAddress,
+          allowFailure: false,
+          callData: encodeFunctionData({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'agentFeeBps', args: [] }),
+        },
+      ]);
 
-      const delegateResult = await publicEthCall(
-        rpcUrl,
-        timelockVaultAddress,
-        encodeFunctionData({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'vaultDelegate', args: [vaultId as `0x${string}`] })
-      );
-      const delegate = decodeFunctionResult({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'vaultDelegate', data: delegateResult });
+      const onChainVault = decodeFunctionResult({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'getVault', data: getVaultRes.returnData });
+      const delegate = decodeFunctionResult({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'vaultDelegate', data: delegateRes.returnData });
+      const agentFeeBps = decodeFunctionResult({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'agentFeeBps', data: feeRes.returnData });
 
-      const feeResult = await publicEthCall(
-        rpcUrl,
-        timelockVaultAddress,
-        encodeFunctionData({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'agentFeeBps', args: [] })
-      );
-      const agentFeeBps = decodeFunctionResult({ abi: TIMELOCK_VAULT_VIEW_ABI, functionName: 'agentFeeBps', data: feeResult });
+      const hasOracle = onChainVault.conditionOracle && onChainVault.conditionOracle.toLowerCase() !== ZERO_ADDRESS;
+      const hasTreasuryCheck = onChainVault.treasuryBalanceCheck && onChainVault.treasuryBalanceCheck.toLowerCase() !== ZERO_ADDRESS;
 
       let oraclePrice: bigint | null = null;
-      if (onChainVault.conditionOracle && onChainVault.conditionOracle.toLowerCase() !== ZERO_ADDRESS) {
-        const priceResult = await publicEthCall(
-          rpcUrl,
-          onChainVault.conditionOracle,
-          encodeFunctionData({ abi: PRICE_ORACLE_ABI, functionName: 'getPrice', args: [] })
-        );
-        oraclePrice = decodeFunctionResult({ abi: PRICE_ORACLE_ABI, functionName: 'getPrice', data: priceResult }) as bigint;
-      }
-
       let treasuryBalance: bigint | null = null;
-      if (onChainVault.treasuryBalanceCheck && onChainVault.treasuryBalanceCheck.toLowerCase() !== ZERO_ADDRESS) {
-        const balResult = await publicEthCall(
-          rpcUrl,
-          onChainVault.treasuryBalanceCheck,
-          encodeFunctionData({ abi: TREASURY_BALANCE_ABI, functionName: 'getUsdcBalance', args: [] })
-        );
-        treasuryBalance = decodeFunctionResult({ abi: TREASURY_BALANCE_ABI, functionName: 'getUsdcBalance', data: balResult }) as bigint;
+
+      if (hasOracle || hasTreasuryCheck) {
+        // Second batched call for the condition-specific reads - only needed for conditioned
+        // vaults, which are the minority case.
+        const conditionCalls: Multicall3Call[] = [];
+        if (hasOracle) {
+          conditionCalls.push({
+            target: onChainVault.conditionOracle,
+            allowFailure: false,
+            callData: encodeFunctionData({ abi: PRICE_ORACLE_ABI, functionName: 'getPrice', args: [] }),
+          });
+        }
+        if (hasTreasuryCheck) {
+          conditionCalls.push({
+            target: onChainVault.treasuryBalanceCheck,
+            allowFailure: false,
+            callData: encodeFunctionData({ abi: TREASURY_BALANCE_ABI, functionName: 'getUsdcBalance', args: [] }),
+          });
+        }
+
+        const conditionResults = await publicMulticall(rpcUrl, conditionCalls);
+        let i = 0;
+        if (hasOracle) {
+          oraclePrice = decodeFunctionResult({ abi: PRICE_ORACLE_ABI, functionName: 'getPrice', data: conditionResults[i].returnData }) as bigint;
+          i += 1;
+        }
+        if (hasTreasuryCheck) {
+          treasuryBalance = decodeFunctionResult({ abi: TREASURY_BALANCE_ABI, functionName: 'getUsdcBalance', data: conditionResults[i].returnData }) as bigint;
+        }
       }
 
       return { vault: onChainVault, delegate: delegate as string, agentFeeBps: Number(agentFeeBps), oraclePrice, treasuryBalance };
     },
     enabled: !!vaultId && !!CONTRACT_ADDRESSES.TIMELOCK_VAULT,
     refetchInterval: 15000,
-    retry: 1,
+    retry: 3,
+    // This reads a public RPC directly, independent of the app's own network/auth state - don't
+    // let React Query's onlineManager pause it.
+    networkMode: 'always',
   });
 
   const { data: creditLineStatus } = useQuery({
@@ -1421,15 +1442,19 @@ export default function VaultDetailsPage() {
         </div>
       )}
 
-      {onChainInfo && address?.toLowerCase() === vault.owner?.toLowerCase() && (
+      {address?.toLowerCase() === vault.owner?.toLowerCase() && (
         <div className="card">
           <h2 className="mb-2 text-xl font-bold text-light">Delegate to Autonomous Agent</h2>
           <p className="mb-4 text-sm text-light/60">
             Authorize the CHRONOS vault-maintenance agent to call claimVault() on your behalf once
             this vault matures. Funds always go to you; the agent only earns a small
-            {' '}{(onChainInfo.agentFeeBps / 100).toFixed(2)}% fee on delegate-triggered claims.
+            {' '}{onChainInfo ? (onChainInfo.agentFeeBps / 100).toFixed(2) : '…'}% fee on delegate-triggered claims.
           </p>
 
+          {!onChainInfo ? (
+            <div className="text-sm text-light/50">Loading on-chain delegate status…</div>
+          ) : (
+          <>
           <div className="mb-4 flex items-center justify-between rounded-lg border border-primary/20 bg-dark/30 p-4">
             <div>
               <div className="text-sm text-light/60">Current delegate</div>
@@ -1466,6 +1491,8 @@ export default function VaultDetailsPage() {
             >
               {delegateMutation.isPending ? 'Confirm in wallet...' : 'Revoke Delegate'}
             </button>
+          )}
+          </>
           )}
         </div>
       )}

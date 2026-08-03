@@ -207,6 +207,56 @@ export async function publicEthCall(rpcUrl: string, to: `0x${string}`, data: `0x
   return json.result as `0x${string}`;
 }
 
+// Multicall3 - deployed at the same deterministic address on most EVM chains, including Arc
+// Testnet (confirmed via eth_getCode). Batches several eth_calls into a single RPC round-trip,
+// which matters a lot on a public/rate-limited RPC like Arc Testnet's: the vault detail page's
+// on-chain status read used to make up to 5 sequential eth_calls per page load/refetch, each one
+// a separate opportunity to hit a transient rate limit.
+export const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11' as const;
+
+export const MULTICALL3_ABI = [
+  {
+    type: 'function',
+    name: 'aggregate3',
+    stateMutability: 'view',
+    inputs: [
+      {
+        name: 'calls',
+        type: 'tuple[]',
+        components: [
+          { name: 'target', type: 'address' },
+          { name: 'allowFailure', type: 'bool' },
+          { name: 'callData', type: 'bytes' },
+        ],
+      },
+    ],
+    outputs: [
+      {
+        name: 'returnData',
+        type: 'tuple[]',
+        components: [
+          { name: 'success', type: 'bool' },
+          { name: 'returnData', type: 'bytes' },
+        ],
+      },
+    ],
+  },
+] as const;
+
+export type Multicall3Call = { target: `0x${string}`; allowFailure: boolean; callData: `0x${string}` };
+
+/// Batches multiple read calls into one eth_call via Multicall3, in a single publicEthCall round
+/// trip. Each result's `success`/`returnData` mirrors what aggregate3 returned on-chain - callers
+/// decode only the ones that succeeded (allowFailure:true lets one bad call not blow up the rest).
+export async function publicMulticall(rpcUrl: string, calls: Multicall3Call[]) {
+  const data = encodeFunctionData({ abi: MULTICALL3_ABI, functionName: 'aggregate3', args: [calls] });
+  const result = await publicEthCall(rpcUrl, MULTICALL3_ADDRESS, data);
+  const [returnData] = decodeFunctionResult({ abi: MULTICALL3_ABI, functionName: 'aggregate3', data: result }) as unknown as [
+    { success: boolean; returnData: `0x${string}` }[],
+  ];
+  return returnData;
+}
+
 export const CREDIT_LINE_ABI = [
   {
     type: 'function',
