@@ -1,43 +1,544 @@
-# CHRONOS
+<p align="center">
+  <img src="frontend/public/chronos-logo.png" alt="CHRONOS logo" width="140" />
+</p>
 
-Time-locked USDC savings & vesting, plus treasury/lending infrastructure, on **Arc Testnet** via
-Circle CCTP.
+<h1 align="center">CHRONOS</h1>
 
-Lock USDC for a fixed or flexible term, split a deposit into savings/yield/reserve buckets, gate
-an unlock on a price condition or a treasury balance, stream a deposit out over tranches, borrow
-against a locked vault, and verify every claim of "fully reserved" against a live on-chain call —
-not just a database.
+<p align="center">
+  <strong>Non-custodial, time-locked USDC savings and treasury infrastructure on Arc Testnet.</strong>
+</p>
 
-## Table of contents
+<p align="center">
+  Lock USDC. Split vaults. Stream releases. Gate unlocks. Delegate mature claims. Verify reserves live.
+</p>
 
-- [Pitch](#pitch)
-- [Quickstart](#quickstart)
-- [Architecture overview](#architecture-overview)
-- [Deployed contracts](#deployed-contracts-arc-testnet)
-- [Implemented features](#implemented-features)
-- [Known limitations](#known-limitations)
-- [Verifying the build](#verifying-the-build)
+<p align="center">
+  <a href="https://chronosfinance.vercel.app">Live App</a>
+  ·
+  <a href="https://chronosfinance.vercel.app/features">Features</a>
+  ·
+  <a href="https://chronosfinance.vercel.app/docs">Docs</a>
+  ·
+  <a href="https://chronosfinance.vercel.app/proof-of-reserves">Proof of Reserves</a>
+  ·
+  <a href="https://chronos-backend-production.up.railway.app/health">Backend Health</a>
+</p>
 
-## Pitch
+---
 
-CHRONOS is savings-and-vesting infrastructure for USDC on Arc: time-locked vaults with real
-penalty/discipline mechanics, a live proof-of-reserves check anyone can call without logging in,
-and treasury-adjacent primitives (credit lines, scheduled payouts, multi-condition unlocks) built
-on top of the same vault core. USDC moves onto Arc via Circle's CCTP V2, with attestation
-verification and replay protection enforced both by Circle's own contracts and by an
-application-level guard on top.
+## Table of Contents
 
-## Quickstart
+- [What CHRONOS Is](#what-chronos-is)
+- [Why It Exists](#why-it-exists)
+- [Live Deployment](#live-deployment)
+- [Product Surface](#product-surface)
+- [System Architecture](#system-architecture)
+- [Repository Structure](#repository-structure)
+- [Smart Contracts](#smart-contracts)
+- [Backend Services](#backend-services)
+- [Frontend Application](#frontend-application)
+- [Critical User Flows](#critical-user-flows)
+- [Proof of Reserves](#proof-of-reserves)
+- [Agent Automation](#agent-automation)
+- [Credit Lines](#credit-lines)
+- [Scheduled Payments](#scheduled-payments)
+- [CCTP Settlement](#cctp-settlement)
+- [Environment Variables](#environment-variables)
+- [Local Development](#local-development)
+- [Verification](#verification)
+- [Deployment Notes](#deployment-notes)
+- [Troubleshooting](#troubleshooting)
+- [Known Limitations](#known-limitations)
+- [Roadmap](#roadmap)
+- [Further Reading](#further-reading)
 
-### 1. Smart contracts
+---
+
+## What CHRONOS Is
+
+CHRONOS is a full-stack testnet savings platform for Arc. It lets a user connect a wallet, lock
+USDC into a time-based vault, track that vault through a dashboard, add more funds, claim at
+maturity, optionally withdraw early from flexible vaults, and verify the reserve posture of the
+system from public read-only endpoints.
+
+The project is not just a frontend mock. The repo contains:
+
+- Arc Testnet Solidity contracts for vaults, treasury, proof of reserves, scheduled payments,
+  credit lines, bridge orchestration, CCTP receivers, governance timelock, and oracle adapters.
+- An Express backend that handles auth, vault APIs, event indexing, bridge tracking, keeper jobs,
+  proof-of-reserves reads, and agent automation.
+- A Next.js frontend with public marketing/docs pages and wallet-gated dashboard workflows.
+- Production deployment targets on Vercel and Railway.
+- Smoke scripts and verification commands for contracts, frontend, backend, and live endpoints.
+
+CHRONOS is currently scoped as a **testnet release**. It is built around real contract calls and
+real infrastructure, but it should not be treated as an audited mainnet financial product.
+
+## Why It Exists
+
+Savings products usually fail users in one of two ways:
+
+1. They are too soft: users can exit any time, so the product does not actually create discipline.
+2. They are too custodial: users must trust an app, company, or database to represent balances
+   correctly.
+
+CHRONOS takes the opposite path:
+
+- **Rules live in contracts.** A fixed vault cannot simply be bypassed in the UI.
+- **Users keep wallet custody.** CHRONOS does not ask users to surrender keys.
+- **Settlement is observable.** Vault lifecycle and proof-of-reserves flows are designed around
+  on-chain state, not a database-only story.
+- **Advanced behavior remains explicit.** Split vaults, streaming releases, oracle conditions,
+  delegated claims, and credit lines are all modeled as separate primitives rather than hidden
+  product magic.
+
+## Live Deployment
+
+| Surface | URL | Purpose |
+| --- | --- | --- |
+| Frontend | `https://chronosfinance.vercel.app` | Public app and dashboard |
+| Features | `https://chronosfinance.vercel.app/features` | Product capability overview |
+| Docs | `https://chronosfinance.vercel.app/docs` | User/operator documentation |
+| Public reserves | `https://chronosfinance.vercel.app/proof-of-reserves` | Walletless reserves view |
+| Backend health | `https://chronos-backend-production.up.railway.app/health` | Runtime service status |
+| Agent status | `https://chronos-backend-production.up.railway.app/api/agent/status` | Keeper configuration/status |
+
+Verified on 2026-08-03:
+
+- Vercel frontend returned `200 OK`.
+- Railway `/health` returned `200 OK`.
+- Railway `/api/agent/status` returned `200 OK`.
+- Backend health reported `eventListener`, `bridgeTracker`, `scheduledPaymentKeeper`, and
+  `vaultAgentKeeper` running.
+
+## Product Surface
+
+### Public Pages
+
+- `/` - Homepage and primary call to action.
+- `/features` - Dedicated feature overview page.
+- `/docs` - Detailed product, flow, and operations documentation.
+- `/proof-of-reserves` - Public reserve transparency page.
+
+### Wallet-Gated Dashboard
+
+- `/dashboard` - Vault portfolio overview.
+- `/dashboard/create-vault` - Guided vault creation flow.
+- `/dashboard/[vaultId]` - Vault lifecycle, add-funds, claim, withdrawal, and detail view.
+- `/dashboard/proof-of-reserves` - Authenticated dashboard reserves view.
+- `/dashboard/activity` - User activity feed.
+- `/dashboard/lend` - Credit-line workflow.
+- `/dashboard/treasury-payments` - Treasury scheduled-payment workflow.
+- `/dashboard/settings` - Wallet/account settings.
+
+## System Architecture
+
+At a high level, CHRONOS is a three-layer application:
+
+```text
+User wallet
+  |
+  | Privy session + signed wallet transactions
+  v
+Next.js frontend
+  |
+  | REST API, session token, vault actions, reserve reads
+  v
+Express backend on Railway
+  |
+  | Supabase, Arc RPC, source-chain RPCs, Circle Iris/CCTP, keeper jobs
+  v
+Arc Testnet contracts
+```
+
+Arc Testnet is the canonical settlement chain. Source chains are used for supported CCTP deposit
+and claim routes, while vault state and reserve verification settle on Arc.
+
+### Architecture Decisions
+
+- **Arc as canonical state.** Vaults, reserves, credit lines, scheduled payments, and treasury
+  primitives live on Arc Testnet.
+- **CCTP for USDC movement.** USDC movement uses Circle CCTP V2 style burn-and-mint settlement.
+- **Backend as coordinator, not custodian.** The backend tracks settlement, events, sessions, and
+  keeper jobs. It should not be treated as the source of truth for funds.
+- **Live reserves over DB-only accounting.** The live verification path calls the contract rather
+  than trusting only Supabase aggregates.
+- **Privy for wallet authentication.** The frontend uses Privy for wallet login/session UX while
+  still relying on the user's wallet for transaction authority.
+- **Webpack build path.** The frontend production build uses `next build --webpack`.
+
+## Repository Structure
+
+```text
+.
+├── backend/
+│   ├── src/
+│   │   ├── routes/              # REST API routes
+│   │   ├── services/            # Vault, bridge, proof, agent, keeper services
+│   │   ├── middleware/          # Auth and error handling
+│   │   ├── config/              # Env, contracts, logger, database clients
+│   │   └── server.js            # Express entrypoint
+│   └── package.json
+├── contracts/
+│   ├── arc/                     # Arc Testnet Solidity contracts
+│   ├── scripts/                 # Deployment and smoke scripts
+│   ├── test/                    # Contract tests
+│   └── hardhat.config.js
+├── frontend/
+│   ├── app/                     # Next.js App Router pages
+│   ├── components/              # Layout and UI components
+│   ├── config/                  # Chain and contract constants
+│   ├── hooks/                   # Wallet/session hooks
+│   ├── services/                # API and contract-facing frontend services
+│   ├── store/                   # Zustand stores
+│   ├── types/                   # Shared frontend types
+│   └── public/chronos-logo.png
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── ARCHITECTURE_DECISION.md
+│   └── archive/
+└── README.md
+```
+
+## Smart Contracts
+
+Contracts live under `contracts/arc/`.
+
+| Contract | Role |
+| --- | --- |
+| `TimeLockVault.sol` | Core vault engine: deposits, fixed/flexible claims, early withdrawal penalty, split buckets, streaming tranches, oracle/treasury conditions, credit-line collateral hooks, delegated claims |
+| `VaultFactory.sol` | Vault creation entrypoint and registry/statistics |
+| `BridgeOrchestrator.sol` | Coordinates inbound/outbound CCTP vault settlement |
+| `CCTPReceiver.sol` | Source-chain receiver with processed-message replay guard |
+| `ProofOfReserves.sol` | Live reserve verification against vault state |
+| `Treasury.sol` | Protocol fee collection and USDC accounting |
+| `CreditLine.sol` | USDC credit lines collateralized by locked vault balances |
+| `ScheduledPayment.sol` | On-chain payment schedule guards, executed by backend keeper |
+| `GovernanceTimelock.sol` | Delayed governance execution for privileged changes |
+| `BandOracleAdapter.sol` | Adapter for real oracle-style price reads where configured |
+| `MockPriceOracle.sol` | Demo/mock price oracle for controllable test scenarios |
+
+### Arc Network Constants
+
+| Concept | Value |
+| --- | --- |
+| Arc Testnet chain ID | `5042002` |
+| Arc CCTP domain | `26` |
+| Arc RPC | `https://rpc.testnet.arc.network` |
+| Arc explorer | `https://testnet.arcscan.app` |
+| Arc USDC interface | `0x3600000000000000000000000000000000000000` |
+| CCTP TokenMessenger | `0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA` |
+| CCTP MessageTransmitter | `0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275` |
+
+### Vault Modes
+
+| Mode | Behavior |
+| --- | --- |
+| Fixed | Funds remain locked until unlock time. No early withdrawal path. |
+| Flexible | Funds can be withdrawn early with a configured penalty; no penalty at maturity. |
+| Split | A deposit is allocated across savings/yield/reserve-style buckets by basis points. |
+| Streaming | Funds release over tranches instead of one all-or-nothing unlock. |
+| Oracle-conditioned | Claim requires a configured oracle price condition in addition to time. |
+| Treasury-conditioned | Claim requires a treasury balance condition in addition to time. |
+| Delegated | Owner can authorize an agent address to trigger eligible claims without redirecting payout. |
+| Collateralized | A vault can back a credit line and be locked/unlocked/liquidated through the CreditLine contract. |
+
+## Backend Services
+
+The backend is an Express app with Supabase/Postgres persistence and several long-running services.
+
+| Service | File | Purpose |
+| --- | --- | --- |
+| Vault API | `backend/src/routes/vaults.js` | Create, list, read, add funds, claim, recover, and reconcile vaults |
+| Auth API | `backend/src/routes/auth.js` | Privy-backed session flow and JWT handling |
+| Bridge API | `backend/src/routes/bridge.js` | Bridge and CCTP helper endpoints |
+| Proof API | `backend/src/routes/proofOfReserves.js` | Public reserve reads and live verification |
+| Agent API | `backend/src/routes/agent.js` | Agent keeper status and delegated maintenance surface |
+| Credit API | `backend/src/routes/creditLine.js` | Credit-line backend route |
+| Scheduled payments API | `backend/src/routes/scheduledPayments.js` | Treasury scheduled-payment route |
+| Event listener | `backend/src/services/eventListenerService.js` | Polls Arc events and updates read models |
+| Bridge tracker | `backend/src/services/bridgeTrackerService.js` | Tracks CCTP attestation and settlement state |
+| CCTP relay | `backend/src/services/cctpRelayService.js` | Fetches/verifies Circle attestations and submits receive calls |
+| Vault agent | `backend/src/services/vaultAgentService.js` | Scans for eligible delegated vaults and triggers claims |
+| Smart account agent | `backend/src/services/agentSmartAccountService.js` | ERC-4337/Pimlico sponsored execution path |
+| Proof service | `backend/src/services/proofOfReservesService.js` | Aggregated and live reserve calculations |
+
+## Frontend Application
+
+The frontend is a Next.js App Router application.
+
+| Area | Stack |
+| --- | --- |
+| Framework | Next.js 16 App Router |
+| UI | React 18 + Tailwind CSS |
+| Data fetching | React Query + Axios |
+| Client state | Zustand |
+| Wallet/auth | Privy + wallet provider |
+| Contract calls | Viem |
+| Charts/reserves | Recharts |
+
+Design-wise, CHRONOS uses a restrained dark operations UI: high-contrast cards, compact dashboard
+information, clear transaction stages, and bright primary actions for wallet/contract moments.
+
+## Critical User Flows
+
+### 1. Create Vault
+
+```text
+Connect wallet
+  -> choose source chain
+  -> choose amount and duration
+  -> choose fixed/flexible vault type
+  -> optionally configure condition/split/streaming behavior
+  -> review terms
+  -> approve spender if allowance is insufficient
+  -> submit source-chain settlement
+  -> backend tracks CCTP/Arc settlement
+  -> vault detail page opens
+```
+
+The create flow is deliberately staged so users see when they are selecting product terms versus
+when they are authorizing wallet actions.
+
+### 2. Add Funds
+
+```text
+Open active vault
+  -> choose add-funds action
+  -> enter amount
+  -> approve if needed
+  -> submit source-chain transaction
+  -> backend settles update
+  -> lifecycle entry appears as Added Funds
+```
+
+Add-funds preserves the existing vault schedule and updates lifecycle accounting.
+
+### 3. Claim at Maturity
+
+```text
+Open mature vault
+  -> choose claim destination
+  -> simulate claim
+  -> sign transaction
+  -> settle claim
+  -> reconcile on-chain status
+  -> UI shows claimed / zero locked balance
+```
+
+The app uses simulation before sending where possible so contract reverts are surfaced early.
+
+### 4. Flexible Early Withdrawal
+
+Flexible vaults support emergency withdrawal before maturity with a penalty. Fixed vaults are
+intentionally stricter and should reject early withdrawal.
+
+### 5. Recover Submitted Burn
+
+If a wallet burn succeeds but backend settlement times out before a vault appears, the user can
+recover by submitting the source-chain burn transaction hash in the recovery panel.
+
+### 6. Delegate Agent
+
+A vault owner can authorize the configured agent smart account as delegate. The delegate can trigger
+eligible claims, but payout goes to the vault owner. The delegate cannot redirect user funds.
+
+### 7. Credit Line
+
+The lending area uses the configured CreditLine contract. A vault can be treated as collateral
+through contract hooks that lock, unlock, or liquidate collateral according to CreditLine rules.
+
+## Proof of Reserves
+
+Proof of reserves has two surfaces:
+
+| Endpoint/Page | Purpose |
+| --- | --- |
+| `/proof-of-reserves` | Public frontend page |
+| `/dashboard/proof-of-reserves` | Dashboard reserves page |
+| `GET /api/proof-of-reserves` | Aggregated/cached backend view |
+| `GET /api/proof-of-reserves/verify` | Live on-chain verification path |
+
+The live verification path calls `ProofOfReserves.verifyLiveReserves()` and does not rely solely on
+database totals. This distinction matters: the database is useful for fast UI and history, but Arc
+contract state is the authority for live reserve math.
+
+## Agent Automation
+
+The vault-maintenance agent is designed around bounded authority:
+
+- The owner explicitly delegates a vault.
+- The agent can trigger eligible claim execution.
+- Payout remains bound to the vault owner.
+- Delegate fees are handled by contract rules.
+- The backend keeper scans for eligible delegated vaults.
+- The production status endpoint reports whether the keeper is configured and running.
+
+Production status:
+
+```text
+GET https://chronos-backend-production.up.railway.app/api/agent/status
+```
+
+Expected healthy shape:
+
+```json
+{
+  "configured": true,
+  "keeperRunning": true,
+  "eligibleVaultCount": 0,
+  "eligibleVaultIds": []
+}
+```
+
+`eligibleVaultCount: 0` is normal when no delegated mature vaults are ready.
+
+## Credit Lines
+
+Credit lines extend vaults beyond simple savings. The idea is that locked value can back a USDC
+credit line while contract hooks prevent collateral from being freely claimed during the loan.
+
+Important moving parts:
+
+- `CreditLine.sol` owns credit-line state.
+- `TimeLockVault.sol` exposes collateral hooks callable by the configured CreditLine contract.
+- The frontend lending page lives at `/dashboard/lend`.
+- Frontend production configuration uses `NEXT_PUBLIC_CREDIT_LINE`.
+- Backend route code lives in `backend/src/routes/creditLine.js`.
+
+## Scheduled Payments
+
+Scheduled payments are modeled with a contract plus an off-chain keeper:
+
+- `ScheduledPayment.sol` stores payment schedules and enforces due-time and balance guards.
+- The backend scheduled-payment keeper calls execution once a payment is due.
+- The keeper cannot bypass on-chain rules, but it can delay execution if the backend is down.
+- The dashboard page lives at `/dashboard/treasury-payments`.
+
+This is intentionally documented as centralized keeper automation, not decentralized automation.
+
+## CCTP Settlement
+
+CHRONOS uses CCTP-style settlement for USDC movement between supported testnets and Arc.
+
+Supported source/destination chain set in this repo:
+
+- Ethereum Sepolia
+- Base Sepolia
+- Arbitrum Sepolia
+- OP Sepolia
+- Arc Testnet
+
+The backend bridge path is designed around a state machine:
+
+```text
+PENDING_ATTESTATION
+  -> ATTESTED
+  -> RECEIVED_ON_ARC
+  -> VAULT_CREATED
+```
+
+Before relaying, the backend verifies expected amount and recipient data where applicable. Circle's
+MessageTransmitter still verifies the attestation at the protocol contract layer.
+
+## Environment Variables
+
+Do not commit secret values. Use the names below as the contract between local development,
+Railway, Vercel, and scripts.
+
+### Shared / Auth
+
+| Variable | Purpose |
+| --- | --- |
+| `JWT_SECRET` | Backend JWT signing secret |
+| `PRIVY_APP_ID` | Privy app identifier |
+| `PRIVY_APP_SECRET` | Privy server secret; backend only |
+
+### Circle / CCTP
+
+| Variable | Purpose |
+| --- | --- |
+| `CIRCLE_API_KEY` | Circle API key |
+| `CCTP_TOKEN_MESSENGER` | CCTP TokenMessenger contract |
+| `CCTP_MESSAGE_TRANSMITTER` | CCTP MessageTransmitter contract |
+| `*_CCTP_RECEIVER_ADDRESS` | Source-chain receiver addresses |
+
+### Arc Contracts
+
+| Variable | Purpose |
+| --- | --- |
+| `ARC_TESTNET_RPC` | Arc Testnet RPC URL |
+| `ARC_CHAIN_ID` | Arc chain ID, `5042002` |
+| `ARC_CCTP_DOMAIN` | Arc CCTP domain, `26` |
+| `ARC_USDC` | Arc USDC interface |
+| `ARC_TREASURY_ADDRESS` | Treasury contract |
+| `ARC_GOVERNANCE_TIMELOCK_ADDRESS` | Governance timelock |
+| `ARC_TIMELOCK_VAULT_ADDRESS` | TimeLockVault contract |
+| `ARC_BRIDGE_ORCHESTRATOR_ADDRESS` | BridgeOrchestrator contract |
+| `ARC_VAULT_FACTORY_ADDRESS` | VaultFactory contract |
+| `ARC_PROOF_OF_RESERVES_ADDRESS` | ProofOfReserves contract |
+| `ARC_CREDIT_LINE_ADDRESS` | CreditLine contract |
+| `ARC_SCHEDULED_PAYMENT_ADDRESS` | ScheduledPayment contract |
+| `ARC_MOCK_PRICE_ORACLE_ADDRESS` | Mock/demo oracle |
+| `ARC_BAND_ORACLE_ADAPTER_ADDRESS` | Band oracle adapter |
+
+### Backend
+
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | Supabase/Postgres connection string |
+| `NODE_ENV` | Runtime environment |
+| `PORT` | Backend port, usually `3001` locally |
+| `SCHEDULED_PAYMENTS_ADMIN_KEY` | Server-side key for owner-gated scheduled-payment creation |
+
+### Frontend
+
+| Variable | Purpose |
+| --- | --- |
+| `NEXT_PUBLIC_API_URL` | Frontend API base URL |
+| `NEXT_PUBLIC_TIMELOCK_VAULT` | Public TimeLockVault address |
+| `NEXT_PUBLIC_CREDIT_LINE` | Public CreditLine address |
+| `NEXT_PUBLIC_CIRCLE_APP_ID` | Circle user-controlled wallet app ID, if email onboarding is enabled |
+
+Production frontend should use:
+
+```text
+NEXT_PUBLIC_API_URL=https://chronos-backend-production.up.railway.app
+```
+
+Local frontend normally uses:
+
+```text
+NEXT_PUBLIC_API_URL=http://localhost:3001
+```
+
+## Local Development
+
+### Prerequisites
+
+- Node.js compatible with the lockfiles.
+- npm.
+- A wallet with testnet support.
+- Supabase/Postgres connection for backend persistence.
+- RPC access for Arc Testnet and supported source testnets.
+- Circle/Privy credentials for full live flows.
+
+### 1. Contracts
 
 ```bash
 cd contracts
 npm install
-npx hardhat compile
-# Run smoke tests against a local/forked node (see "Verifying the build" below) —
-# `npx hardhat test` is currently broken under this Hardhat 3 setup; use the smoke scripts instead.
-npx hardhat run scripts/smoke-treasury.js
+npm run compile
+```
+
+Deploy scripts:
+
+```bash
+npm run deploy:arc
+npm run deploy:base
+npm run deploy:arbitrum
+npm run deploy:ethereum
+npm run deploy:op
 ```
 
 ### 2. Backend
@@ -45,8 +546,20 @@ npx hardhat run scripts/smoke-treasury.js
 ```bash
 cd backend
 npm install
-cp ../.env.example .env.local   # then fill in real values
-npm run dev            # http://localhost:3001
+cp ../.env.example .env
+npm run dev
+```
+
+Default local backend:
+
+```text
+http://localhost:3001
+```
+
+Health check:
+
+```bash
+curl http://localhost:3001/health
 ```
 
 ### 3. Frontend
@@ -54,183 +567,57 @@ npm run dev            # http://localhost:3001
 ```bash
 cd frontend
 npm install
-cp .env.example .env.local      # then fill in real values
-npm run dev            # http://localhost:3000
+cp .env.example .env
+npm run dev
 ```
 
-Proof of reserves is public at `http://localhost:3000/proof-of-reserves` — no wallet connection
-required.
+Default local frontend:
 
-## Architecture overview
+```text
+http://localhost:3000
+```
 
-Arc Testnet is the canonical settlement chain: vault, treasury, proof-of-reserves, credit-line,
-and governance contracts all live on Arc, and USDC arrives there via Circle CCTP V2 from Base
-Sepolia, Arbitrum Sepolia, Ethereum Sepolia, or OP Sepolia. The backend indexes Arc events, tracks
-CCTP attestations through a verified fetch → poll → verify → submit pipeline, and exposes a REST
-API; the frontend is a Next.js dashboard gated behind an injected-wallet session, except for the
-public proof-of-reserves page.
-
-Full write-up, contract-by-contract responsibilities, the CCTP attestation state machine, and the
-`TimeLockVault` feature surface (split vaults, oracle-gated unlocks, streaming, credit-line
-collateral) live in **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)**.
-
-## Deployed contracts (Arc Testnet)
-
-Addresses are populated post-deployment in each environment's `.env` file — no secrets or private
-keys, just contract addresses. Env var names below match `.env.example`; see that file for the
-current testnet values.
-
-| Contract | Env var |
-| --- | --- |
-| Treasury | `ARC_TREASURY_ADDRESS` |
-| GovernanceTimelock | `ARC_GOVERNANCE_TIMELOCK_ADDRESS` |
-| TimeLockVault | `ARC_TIMELOCK_VAULT_ADDRESS` |
-| BridgeOrchestrator | `ARC_BRIDGE_ORCHESTRATOR_ADDRESS` |
-| VaultFactory | `ARC_VAULT_FACTORY_ADDRESS` |
-| ProofOfReserves | `ARC_PROOF_OF_RESERVES_ADDRESS` |
-
-| CreditLine | `ARC_CREDIT_LINE_ADDRESS` |
-| ScheduledPayment | `ARC_SCHEDULED_PAYMENT_ADDRESS` |
-| MockPriceOracle | `ARC_MOCK_PRICE_ORACLE_ADDRESS` |
-| BandOracleAdapter | `ARC_BAND_ORACLE_ADAPTER_ADDRESS` |
-
-All nine contracts above are live on Arc Testnet as of this writing (deployed via
-`contracts/scripts/deploy-arc.js` and `contracts/scripts/deploy-band-oracle-adapter.js`). The
-suite has been redeployed several times during development as contracts changed — the `.env.local`
-values are always the current source of truth; addresses quoted in older docs/commit messages may
-be stale.
-
-Other relevant addresses/config: `ARC_USDC`, `ARC_CHAIN_ID` (`5042002`), `ARC_CCTP_DOMAIN` (`26`),
-`CCTP_TOKEN_MESSENGER`, `CCTP_MESSAGE_TRANSMITTER`, and per-source-chain
-`*_CCTP_RECEIVER_ADDRESS` variables. See `.env.example` for the full list.
-
-## Implemented features
-
-- **Treasury (USDC)** — protocol fee collection and multisig-controlled USDC accounting
-  (`Treasury.sol`).
-- **Live proof-of-reserves** — `GET /api/proof-of-reserves` (cached/aggregated) and
-  `GET /api/proof-of-reserves/verify` (live on-chain call to
-  `ProofOfReserves.verifyLiveReserves()`, bypassing the database). Both are public, read-only, and
-  reachable without a wallet session — no auth middleware runs on either route.
-- **Split / "Smart Treasury" vaults** — a single deposit auto-allocates into savings/yield/reserve
-  buckets by basis points, each claimable independently (`TimeLockVault.depositFromBridgeSplit` /
-  `claimBucket`).
-- **Credit lines** — USDC credit lines collateralized by locked vault balances, with on-chain
-  lock/unlock/liquidate hooks between `CreditLine.sol` and `TimeLockVault.sol`.
-- **Oracle-gated unlock** — a vault claim can additionally require a price condition from a
-  configured oracle. **`MockPriceOracle.sol` is a demo mock** — see Known Limitations.
-- **Multi-condition unlock** — an oracle-price condition and a treasury-balance condition can both
-  be attached to the same vault; both must pass before claim.
-- **Streaming vaults** — a deposit can release over evenly-spaced tranches instead of a single
-  unlock, claimable incrementally as tranches mature.
-- **Hardened CCTP attestation w/ replay guard** — inbound and outbound CCTP transfers verify real
-  Circle attestations (not a relayer shortcut) before submitting to Circle's own
-  `MessageTransmitterV2`, plus an on-chain processed-message guard in `CCTPReceiver.sol` as
-  defense-in-depth. See `docs/ARCHITECTURE.md` §4 for the full flow.
-- **Scheduled payments** — `ScheduledPayment.sol` enforces due-timestamp, double-execution, and
-  balance-threshold guards on-chain; a backend cron keeper triggers execution once due (see Known
-  Limitations — this keeper is centralized).
-- **Multi-chain destination bridging** — claims can target Base Sepolia, Arbitrum Sepolia,
-  Ethereum Sepolia, or OP Sepolia as the outbound destination, not just the vault's original
-  source chain.
-- **Real oracle option (Band Protocol)** — `BandOracleAdapter.sol` wraps Band Protocol's live
-  `StdReference` contract on Arc Testnet (`0x8c064bCf7C0DA3B3b090BAbFE8f3323534D84d68`, verified
-  on-chain returning a real USDC/USD rate), exposing the same `getPrice()` interface vaults expect.
-  `MockPriceOracle.sol` remains available as a fallback for demo scenarios that need a controllable
-  price.
-- **Vault-maintenance agent (autonomous claim)** — a vault owner can call
-  `TimeLockVault.setVaultDelegate(vaultId, agentAddress)` to authorize an address (the agent's
-  ERC-4337 smart account) to trigger `claimVault()` on their behalf. Payout always goes to the
-  vault owner; the delegate cannot redirect funds. `backend/src/services/vaultAgentService.js`
-  scans for eligible delegated vaults and submits claims.
-- **Gas-sponsored autonomous execution (Pimlico + ERC-4337)** — the agent's claim transactions
-  are sponsored via Pimlico's real, live bundler + paymaster on Arc Testnet
-  (`backend/src/services/agentSmartAccountService.js`, a standard ERC-4337 `SimpleAccount`). The
-  owner key never needs Arc gas. **Verified with a full real end-to-end run against the live
-  deployed contracts** (`contracts/scripts/e2e-agent-sponsored-claim.js`): created a real vault,
-  owner delegated it to the agent, agent executed a genuinely gas-sponsored `claimVault()` —
-  result `success: true`, tx
-  [`0x3b22adc81a7d62e97807c1a0b7a29163cf2b6f40ee4b726fce7ba31869eb8a98`](https://testnet.arcscan.app/tx/0x3b22adc81a7d62e97807c1a0b7a29163cf2b6f40ee4b726fce7ba31869eb8a98),
-  owner received 0.999 USDC, agent received 0.001 USDC, agent held zero USDC and zero gas the
-  entire time.
-- **Agent self-payment (on-chain fee split)** — when a delegate (not the owner) triggers a claim,
-  `TimeLockVault.sol` automatically pays that delegate a small, owner-settable fee (`agentFeeBps`,
-  default 0.10%, capped at 1%) out of the claimed amount, with the remainder going to the owner.
-  Owner-triggered claims are unaffected — zero fee. Confirmed in the same real end-to-end run
-  above (exact 0.10% fee paid to the agent).
-- **Circle Developer-Controlled Wallet** — a real wallet, created and verified live on Arc Testnet
-  via Circle's sandbox API (`backend/src/services/circleWalletService.js`). Kept as an
-  alternative, non-sponsored claim path (`executeAgentClaimViaCircleWallet()`) — see known
-  limitations.
-- **Circle App Kit** — `backend/src/services/appKitBridgeService.js` uses Circle's real `AppKit`
-  SDK (`kit.bridge()` / `kit.estimateBridge()`) to deposit USDC from a source chain into Arc.
-  Verified live: `kit.getSupportedChains()` confirms Arc Testnet is registered with full CCTP v2
-  config, and a real `estimateBridge()` call from Base Sepolia → Arc Testnet returned genuine fee
-  figures. A read-only `GET /api/bridge/appkit/supported-chains` route is exposed; the
-  estimate/execute functions require a private-key adapter and are not exposed over HTTP, since
-  CHRONOS's real user flow uses browser-injected wallets (keys never touch the backend).
-- **Email OTP wallet onboarding (Circle User-Controlled Wallets)** — a second sign-up path
-  alongside the existing injected-wallet flow, not a replacement. A user enters just their email;
-  Circle issues them a real SCA (smart contract account) wallet on Arc Testnet, secured by a PIN
-  they set via Circle's own hosted UI — no seed phrase, no browser extension. Backend
-  (`backend/src/services/userWalletService.js`, `routes/userWallet.js`) wraps Circle's real
-  `@circle-fin/user-controlled-wallets` SDK; `createUser`/`createUserToken` verified working live.
-  Frontend (`frontend/hooks/useEmailWallet.ts`, `components/forms/EmailSignupModal.tsx`) drives
-  Circle's real `@circle-fin/w3s-pw-web-sdk`, which renders Circle's own hosted OTP-entry and
-  PIN-creation UI. See known limitations for the two Console-side setup steps this still needs.
-
-## Known limitations
-
-Read before demoing or judging — these are real, current gaps, not hedging:
-
-- **Scheduled payments use a centralized backend cron keeper**, not decentralized on-chain
-  automation. `ScheduledPayment.sol` enforces all safety invariants on-chain (due time,
-  double-execution, balance threshold), so the keeper cannot steal funds or bypass a guard — but it
-  is a single off-chain process, and a hackathon-timeline tradeoff versus something like Chainlink
-  Automation, which isn't confirmed available on Arc yet.
-- **Chainlink price feeds are not confirmed live on Arc Testnet.** Research found real Chainlink
-  CCIP infrastructure on Arc (router, RMN, LINK token) and a "Chainlink Scale" partnership
-  announcement, but no verifiable Data Feeds/AggregatorV3 contract address. Band Protocol was used
-  instead because it has one confirmed, on-chain-verified queryable address.
-- **Circle Paymaster is not integrated and is not usable on Arc.** Confirmed absent from Arc on
-  both Circle's marketing page and developer docs (supported chains: Arbitrum, Avalanche, Base,
-  Ethereum, Optimism, Polygon PoS, Unichain — no Arc). Not attempted.
-- **Circle Nanopayments is not integrated**, despite being confirmed real and live on Arc Testnet
-  (via Circle's own `circlefin/arc-nanopayments` sample repo). Item 15 (agent self-payment) is
-  instead implemented as a direct on-chain fee split in `TimeLockVault.claimVault()` — simpler,
-  fully on-chain, and verified — rather than the off-chain x402/Gateway batching flow Nanopayments
-  uses. Worth revisiting if a demo specifically wants to showcase Circle's Nanopayments product.
-- **The agent's Circle Wallet is unfunded and is not the primary claim path.** It exists and is
-  verified live on Arc Testnet, but `executeAgentClaimViaCircleWallet()` needs the wallet to hold
-  its own Arc gas, which it does not. The primary claim path (`executeAgentClaim()`, via the
-  ERC-4337 smart account + Pimlico paymaster) does not have this limitation and has been verified
-  end-to-end — see "Gas-sponsored autonomous execution" above.
-- **The agent's smart account owner key is a single, unshared key.** It's deliberately generated
-  fresh and never funded (that's the point — Pimlico sponsors its gas), but it's still a single
-  point of failure for the agent's ability to act. Production hardening would mean rotating it out
-  of a plain env var into a proper key-management setup.
-- **Email OTP onboarding needs two Circle Console steps not yet completed**: (1) a
-  User-Controlled Wallets App ID (`NEXT_PUBLIC_CIRCLE_APP_ID`) for the frontend SDK to
-  initialize — confirmed via testing that no backend call needs this, only the Web SDK; (2) an
-  SMTP relay configured in Circle Console, since Circle does not deliver OTP emails itself. Until
-  both are set, the email sign-up modal shows a "not configured" message and falls back to
-  Connect Wallet — backend routes and frontend flow are otherwise fully wired and type-checked.
-- **Email-onboarded users are not yet wired to Circle Gas Station for gas sponsorship.** Their
-  SCA wallets exist on Arc Testnet, but nothing sponsors their transaction gas yet — that's a
-  separate integration from what's built (Gas Station is confirmed to support Arc Testnet per
-  earlier research, but not yet implemented here). Contrast with the agent's own wallet, which
-  has verified working Pimlico sponsorship.
-- **`npx hardhat test` is currently broken** under this repo's Hardhat 3 setup. Contract behavior
-  is instead verified via 10 standalone smoke scripts in `contracts/scripts/smoke-*.js`, run with
-  `npx hardhat run scripts/smoke-X.js`. See "Verifying the build" below.
-
-## Verifying the build
-
-There is no hosted demo environment in this repo checkout. To verify contract behavior locally,
-run each smoke script from `contracts/`:
+Production-style local build:
 
 ```bash
-cd contracts
+npm run type-check
+npm run build
+```
+
+## Verification
+
+### Frontend
+
+```bash
+cd frontend
+npm ls --depth=0
+npm run type-check
+npm run build
+```
+
+Known non-fatal build warning:
+
+```text
+Module not found: Can't resolve '@farcaster/mini-app-solana'
+```
+
+This warning currently originates from Privy's optional Farcaster/Solana path and does not fail the
+webpack build.
+
+### Backend
+
+```bash
+cd backend
+npm ls --depth=0
+node --check src/server.js
+npm test
+```
+
+### Contracts
+
+The repo has Hardhat scripts for feature smoke testing. From `contracts/`:
+
+```bash
 npx hardhat run scripts/smoke-treasury.js
 npx hardhat run scripts/smoke-proof-of-reserves.js
 npx hardhat run scripts/smoke-split-vault.js
@@ -240,16 +627,138 @@ npx hardhat run scripts/smoke-streaming-vault.js
 npx hardhat run scripts/smoke-cctp-receiver.js
 npx hardhat run scripts/smoke-scheduled-payment.js
 npx hardhat run scripts/smoke-multichain-claim.js
+npx hardhat run scripts/smoke-vault-delegate.js
 ```
 
-Each script deploys the relevant contracts to an ephemeral local Hardhat network and exercises the
-feature end to end, printing pass/fail as it goes.
+### Live Smoke Checks
 
-## Further reading
+```bash
+curl https://chronosfinance.vercel.app
+curl https://chronosfinance.vercel.app/features
+curl https://chronosfinance.vercel.app/docs
+curl https://chronos-backend-production.up.railway.app/health
+curl https://chronos-backend-production.up.railway.app/api/agent/status
+```
 
-- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — full architecture, contract responsibilities,
-  CCTP attestation flow, `TimeLockVault` feature surface.
-- [docs/archive/](./docs/archive/) — earlier build-status and testing-strategy documents, kept for
-  history. Numbers in those files (test counts, coverage %, completion %) are historical snapshots
-  and are **not** re-verified current claims; treat this README and `docs/ARCHITECTURE.md` as the
-  source of truth.
+## Deployment Notes
+
+### Vercel
+
+Frontend production is deployed from the Next.js app. Required production env values include:
+
+- `NEXT_PUBLIC_API_URL`
+- `NEXT_PUBLIC_TIMELOCK_VAULT`
+- `NEXT_PUBLIC_CREDIT_LINE`
+- `NEXT_PUBLIC_CIRCLE_APP_ID` if the Circle email wallet path is enabled
+- Privy public/client-side configuration values used by the frontend provider
+
+### Railway
+
+Backend production runs on Railway.
+
+Runtime health endpoint:
+
+```text
+https://chronos-backend-production.up.railway.app/health
+```
+
+The health endpoint should show:
+
+- `eventListener: running`
+- `bridgeTracker: running`
+- `scheduledPaymentKeeper: running`
+- `vaultAgentKeeper: running`
+
+### Git Branches
+
+Recent docs/features work was pushed to both:
+
+- `main`
+- `hackathon-sprint`
+
+When deploying, confirm which branch Vercel/Railway are tracking before assuming a pushed commit is
+live.
+
+## Troubleshooting
+
+### Wallet is on the wrong chain
+
+Error shape:
+
+```text
+Wallet is still on chain 5042002. Switch to Ethereum Sepolia (11155111) and retry.
+```
+
+Fix: switch the wallet to the chain named in the message and retry. CHRONOS validates the wallet
+chain before signing transactions.
+
+### Privy approval popup appears
+
+Approval prompts happen when token allowance is not already sufficient for the spender and amount.
+The app checks allowance to avoid unnecessary approvals, but a first-time spender or larger amount
+can still require approval.
+
+### Burn succeeded but no vault appears
+
+Use the submitted-burn recovery panel on the create-vault confirmation step. Paste the source-chain
+burn transaction hash so the backend can resume settlement.
+
+### Claim simulation fails
+
+If simulation says the vault is not active, refresh the vault detail page and confirm status. The
+vault may already be claimed, may not be active, or may not satisfy time/condition requirements.
+
+### Railway URL returns 404
+
+Use the backend URL:
+
+```text
+https://chronos-backend-production.up.railway.app
+```
+
+The shorter `chronos-production.up.railway.app` URL is not the active backend.
+
+## Known Limitations
+
+These are current boundaries, not hidden release claims:
+
+- CHRONOS is a testnet release and is not an audited mainnet custody/finance product.
+- Scheduled payments rely on a centralized backend keeper. Contract guards limit what the keeper
+  can do, but downtime can delay execution.
+- Some oracle flows use mock/demo oracle configuration depending on environment.
+- Circle email wallet onboarding requires correct Circle Console configuration, including app ID
+  and email/SMTP setup.
+- The Circle Developer-Controlled Wallet path exists as an alternative path but is not the primary
+  sponsored agent claim path.
+- Full wallet-based live testing still requires a real browser wallet, testnet USDC, and the
+  correct chain selected by the user.
+- Contract smoke scripts are the preferred contract verification path for this repo. Treat older
+  archived docs as historical snapshots when they conflict with this README.
+
+## Roadmap
+
+High-value next improvements:
+
+- Make docs versioned by deployment environment and contract address set.
+- Add status badges from live health and reserves endpoints.
+- Add guided UI for agent delegation with clearer eligibility explanations.
+- Add richer lending docs once the credit-line UI is fully exercised by live users.
+- Add browser E2E tests for `/features`, `/docs`, create-vault, add-funds, and claim flows.
+- Replace any remaining demo oracle paths with verified production-grade oracle configuration when
+  Arc support is finalized.
+- Add monitoring/alerting documentation for Railway keeper failures and bridge settlement delays.
+- Produce an operator runbook for deployment rollback, stuck settlement recovery, and key rotation.
+
+## Further Reading
+
+- [Architecture](./docs/ARCHITECTURE.md)
+- [Architecture Decision Record](./docs/ARCHITECTURE_DECISION.md)
+- [Contracts Test Coverage](./contracts/TEST_COVERAGE.md)
+- [Contracts Testing Guide](./contracts/TESTING_GUIDE.md)
+- [Archived build docs](./docs/archive/)
+
+---
+
+<p align="center">
+  Built for disciplined testnet savings on Arc.
+</p>
