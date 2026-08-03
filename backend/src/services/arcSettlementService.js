@@ -12,8 +12,12 @@ const BRIDGE_ORCHESTRATOR_ABI = [
   'event BridgeCompleted(bytes32 indexed vaultId, uint256 amount)',
 ];
 
+// getVault() returns the full struct, including the split/streaming/condition fields added by
+// depositFromBridgeSplit/depositFromBridgeAdvanced - declaring only the original short tuple here
+// silently dropped claimedTranches (and every other extended field) from every decoded read,
+// which is exactly what caused syncClaimedTranches() to always fall back to the stale DB count.
 const TIMELOCK_VAULT_ABI = [
-  'function getVault(bytes32 vaultId) view returns ((bytes32 vaultId,address owner,uint256 totalAmount,uint256 createdAt,uint256 unlockAt,uint32 sourceChain,uint8 bridgeProtocol,address tokenAddress,uint8 vaultType,uint8 status,bytes32 bridgeTxHash))',
+  'function getVault(bytes32 vaultId) view returns ((bytes32 vaultId,address owner,uint256 totalAmount,uint256 createdAt,uint256 unlockAt,uint32 sourceChain,uint8 bridgeProtocol,address tokenAddress,uint8 vaultType,uint8 status,bytes32 bridgeTxHash,address conditionOracle,uint256 conditionThreshold,bool conditionAbove,address treasuryBalanceCheck,uint256 treasuryBalanceThreshold,uint32 numTranches,uint32 claimedTranches,uint256 intervalSeconds))',
   'event VaultClaimed(bytes32 indexed vaultId, address indexed owner, uint256 amount, uint32 destinationChain)',
   'event FlexibleWithdrawal(bytes32 indexed vaultId, address indexed owner, uint256 amount, uint256 penalty)',
 ];
@@ -930,6 +934,14 @@ export class ArcSettlementService {
       statusCode,
       status: VAULT_STATUS_CODES[statusCode] || 'FAILED',
       bridgeTxHash: vault.bridgeTxHash,
+      conditionOracle: vault.conditionOracle,
+      conditionThreshold: vault.conditionThreshold,
+      conditionAbove: vault.conditionAbove,
+      treasuryBalanceCheck: vault.treasuryBalanceCheck,
+      treasuryBalanceThreshold: vault.treasuryBalanceThreshold,
+      numTranches: Number(vault.numTranches),
+      claimedTranches: Number(vault.claimedTranches),
+      intervalSeconds: Number(vault.intervalSeconds),
     };
   }
 
