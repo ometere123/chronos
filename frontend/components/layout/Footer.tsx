@@ -1,4 +1,5 @@
 import Image from 'next/image';
+import Link from 'next/link';
 
 export default function Footer() {
   const currentYear = new Date().getFullYear();
@@ -26,8 +27,8 @@ export default function Footer() {
           <div>
             <h4 className="font-semibold text-light mb-4">Product</h4>
             <ul className="space-y-2 text-light/60 text-sm">
-              <li><a href="#features" className="hover:text-primary transition-colors">Features</a></li>
-              <li><a href="#" className="hover:text-primary transition-colors">Docs</a></li>
+              <li><Link href="/features" className="hover:text-primary transition-colors">Features</Link></li>
+              <li><Link href="/docs" className="hover:text-primary transition-colors">Docs</Link></li>
               <li><a href="#" className="hover:text-primary transition-colors">Smart Contracts</a></li>
               <li><a href="#" className="hover:text-primary transition-colors">API</a></li>
             </ul>
