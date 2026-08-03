@@ -1,6 +1,22 @@
 import axios, { AxiosInstance } from 'axios';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const PRODUCTION_API_URL = 'https://chronos-backend-production.up.railway.app';
+const LOCAL_API_URL = 'http://localhost:3001';
+
+function resolveApiUrl() {
+  const configuredUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '');
+
+  if (
+    process.env.NODE_ENV === 'production' &&
+    (!configuredUrl || configuredUrl.includes('chronosfinance.vercel.app'))
+  ) {
+    return PRODUCTION_API_URL;
+  }
+
+  return configuredUrl || LOCAL_API_URL;
+}
+
+const API_URL = resolveApiUrl();
 
 const apiClient: AxiosInstance = axios.create({
   baseURL: `${API_URL}/api`,
