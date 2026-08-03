@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useEffect } from 'react';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
@@ -68,12 +69,12 @@ export default function Home() {
               >
                 {isConnected ? 'Go to Dashboard' : 'Create Vault'}
               </button>
-              <a
-                href="#features"
+              <Link
+                href="/features"
                 className="px-8 py-4 border-2 border-primary text-primary font-bold rounded-lg hover:bg-primary/10 transition-all text-lg"
               >
                 Learn More
-              </a>
+              </Link>
             </div>
 
             {/* Stats */}

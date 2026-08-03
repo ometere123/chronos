@@ -21,7 +21,7 @@ export default function Header() {
   return (
     <header className="sticky top-0 z-50 bg-dark/95 backdrop-blur-sm border-b border-primary/10">
       <div className="max-w-7xl mx-auto px-4">
-        <div className="flex justify-between items-center h-16">
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center h-16">
           <Link href="/" className="flex items-center gap-2 font-bold text-xl text-primary">
             <Image
               src="/chronos-logo.png"
@@ -34,9 +34,12 @@ export default function Header() {
             <span>CHRONOS</span>
           </Link>
 
-          <nav className="hidden md:flex items-center gap-8">
-            <Link href="/#features" className="text-light/70 hover:text-primary transition-colors">
+          <nav className="hidden md:flex items-center justify-center gap-8">
+            <Link href="/features" className="text-light/70 hover:text-primary transition-colors">
               Features
+            </Link>
+            <Link href="/docs" className="text-light/70 hover:text-primary transition-colors">
+              Docs
             </Link>
             {isConnected && (
               <>
@@ -53,7 +56,7 @@ export default function Header() {
             )}
           </nav>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center justify-end gap-4">
             {isConnected ? (
               <div className="flex items-center gap-4">
                 <div className="hidden sm:block text-sm">
@@ -103,11 +106,18 @@ export default function Header() {
         {isMenuOpen && (
           <nav className="md:hidden border-t border-primary/10 py-4 space-y-3">
             <Link
-              href="/#features"
+              href="/features"
               className="block text-light/70 hover:text-primary transition-colors"
               onClick={() => setIsMenuOpen(false)}
             >
               Features
+            </Link>
+            <Link
+              href="/docs"
+              className="block text-light/70 hover:text-primary transition-colors"
+              onClick={() => setIsMenuOpen(false)}
+            >
+              Docs
             </Link>
             {isConnected && (
               <>
