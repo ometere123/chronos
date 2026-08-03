@@ -18,7 +18,7 @@ import {
   SparklesIcon,
 } from '@/components/ui/Icons';
 
-const trustPoints = ['Arc Testnet', 'Circle CCTP', 'Privy wallet auth', 'Live reserve checks'];
+const trustPoints = ['Arc Testnet', 'Circle CCTP'];
 
 const primaryFeatures = [
   {
@@ -89,74 +89,74 @@ export default function Home() {
     <>
       <Header />
       <main className="min-h-screen bg-dark">
-        <section className="border-b border-primary/10 px-4 py-14 sm:py-20">
-          <div className="mx-auto max-w-[1050px]">
-            <div className="grid grid-cols-1 gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
+        <section className="border-b border-primary/10 px-4 py-12 sm:py-16">
+          <div className="mx-auto max-w-[960px]">
+            <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1.04fr_0.96fr] lg:items-center">
               <div>
-                <div className="mb-6 flex flex-wrap gap-2.5">
+                <div className="mb-5 flex flex-wrap gap-2">
                   {trustPoints.map((point) => (
                     <span
                       key={point}
-                      className="inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary"
+                      className="inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
                     >
-                      <CheckIcon className="mr-2 h-3.5 w-3.5" />
+                      <CheckIcon className="mr-1.5 h-3 w-3" />
                       {point}
                     </span>
                   ))}
                 </div>
 
-                <h1 className="max-w-3xl text-4xl font-bold leading-tight text-light sm:text-6xl lg:text-[4.75rem]">
+                <h1 className="max-w-2xl text-4xl font-bold leading-tight text-light sm:text-5xl lg:text-[4.25rem]">
                   Non-custodial USDC vaults for Arc.
                 </h1>
 
-                <p className="mt-6 max-w-xl text-base leading-7 text-light/70 sm:text-lg">
+                <p className="mt-5 max-w-lg text-base leading-7 text-light/70">
                   CHRONOS lets users lock, track, add, claim, and withdraw testnet USDC through
                   transparent time-based vaults. Settlement lives on Arc; wallet authority stays
                   with the user.
                 </p>
 
-                <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+                <div className="mt-7 flex flex-col gap-3 sm:flex-row">
                   <button
                     onClick={handleGetStarted}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-7 py-3.5 text-base font-bold text-dark hover:bg-primary/90"
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-bold text-dark hover:bg-primary/90"
                   >
                     {isConnected ? 'Go to Dashboard' : 'Create Vault'}
                     <ArrowRightIcon className="h-4 w-4" />
                   </button>
                   <Link
                     href="/docs"
-                    className="inline-flex items-center justify-center rounded-lg border-2 border-primary px-7 py-3.5 text-base font-bold text-primary hover:bg-primary/10"
+                    className="inline-flex items-center justify-center rounded-lg border-2 border-primary px-6 py-3 text-sm font-bold text-primary hover:bg-primary/10"
                   >
                     Read Docs
                   </Link>
                 </div>
               </div>
 
-              <div className="rounded-lg border border-primary/10 bg-dark/70 p-5">
-                <div className="mb-5 flex items-center justify-between border-b border-primary/10 pb-4">
+              <div className="rounded-lg border border-primary/10 bg-dark/70 p-4">
+                <div className="mb-4 flex items-center justify-between border-b border-primary/10 pb-3">
                   <div>
                     <p className="text-xs text-light/50">Vault status</p>
-                    <h2 className="text-xl font-bold text-light">Arc settlement view</h2>
+                    <h2 className="text-lg font-bold text-light">Arc settlement view</h2>
                   </div>
-                  <ShieldIcon className="h-8 w-8 text-primary" />
+                  <ShieldIcon className="h-7 w-7 text-primary" />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2.5">
                   {[
                     ['Vault types', 'Fixed / Flexible'],
                     ['Source chains', 'Sepolia routes'],
                     ['Reserve path', 'Public + live'],
                     ['Automation', 'Keeper running'],
                   ].map(([label, value]) => (
-                    <div key={label} className="rounded-lg border border-primary/10 bg-primary/5 p-3.5">
+                    <div key={label} className="rounded-lg border border-primary/10 bg-primary/5 p-3">
                       <p className="text-xs text-light/50">{label}</p>
-                      <p className="mt-2 text-sm font-semibold text-light">{value}</p>
+                      <p className="mt-1.5 text-sm font-semibold text-light">{value}</p>
                     </div>
                   ))}
                 </div>
 
-                <div className="mt-5 rounded-lg border border-primary/10 bg-dark p-3.5">
-                  <p className="text-sm font-semibold text-primary">Production backend</p>
+                <div className="mt-4 rounded-lg border border-primary/10 bg-dark p-3">
+                  <p className="text-xs font-semibold text-primary">Production backend</p>
                   <p className="mt-2 break-all font-mono text-xs text-light/60">
                     chronos-backend-production.up.railway.app
                   </p>

@@ -21,20 +21,20 @@ export default function Header() {
   return (
     <header className="sticky top-0 z-50 bg-dark/95 backdrop-blur-sm border-b border-primary/10">
       <div className="mx-auto max-w-[1400px] px-4 sm:px-6">
-        <div className="grid h-14 grid-cols-[1fr_auto_1fr] items-center">
-          <Link href="/" className="flex items-center gap-2 text-lg font-bold text-primary">
+        <div className="grid h-12 grid-cols-[1fr_auto_1fr] items-center">
+          <Link href="/" className="flex items-center gap-2 text-base font-bold text-primary">
             <Image
               src="/chronos-logo.png"
               alt="CHRONOS"
-              width={56}
-              height={56}
-              className="h-14 w-14 object-contain"
+              width={48}
+              height={48}
+              className="h-12 w-12 object-contain"
               priority
             />
             <span>CHRONOS</span>
           </Link>
 
-          <nav className="hidden items-center justify-center gap-7 md:flex">
+          <nav className="hidden items-center justify-center gap-6 md:flex">
             <Link href="/features" className="text-sm font-medium text-light/70 hover:text-primary transition-colors">
               Features
             </Link>
@@ -86,7 +86,7 @@ export default function Header() {
               <button
                 onClick={() => connect()}
                 disabled={isLoading}
-                className="rounded-lg bg-primary px-5 py-2 text-sm font-semibold text-dark hover:bg-primary/90 transition-colors"
+                className="rounded-lg bg-primary px-4 py-1.5 text-sm font-semibold text-dark hover:bg-primary/90 transition-colors"
               >
                 {isLoading ? 'Connecting...' : 'Connect'}
               </button>
