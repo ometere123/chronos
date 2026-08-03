@@ -1,28 +1,76 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
 import { useWallet } from '@/hooks/useWallet';
 import {
+  ArrowRightIcon,
   BridgeIcon,
   ChartIcon,
   CheckIcon,
   ClockIcon,
+  CoinsIcon,
   LockIcon,
-  PlusIcon,
   ShieldIcon,
+  SparklesIcon,
 } from '@/components/ui/Icons';
+
+const trustPoints = ['Arc Testnet', 'Circle CCTP', 'Privy wallet auth', 'Live reserve checks'];
+
+const primaryFeatures = [
+  {
+    title: 'Fixed and flexible vaults',
+    description:
+      'Choose strict time locks or emergency access with an early-withdrawal penalty.',
+    icon: LockIcon,
+  },
+  {
+    title: 'Cross-chain USDC settlement',
+    description:
+      'Deposit from supported Sepolia networks and settle vault state on Arc Testnet.',
+    icon: BridgeIcon,
+  },
+  {
+    title: 'Live proof of reserves',
+    description:
+      'Public reserve views and a live contract verification path keep balances inspectable.',
+    icon: ChartIcon,
+  },
+  {
+    title: 'Advanced release rules',
+    description:
+      'Split allocations, streaming tranches, and condition-gated unlocks for richer vault design.',
+    icon: ClockIcon,
+  },
+  {
+    title: 'Credit-line surface',
+    description:
+      'Use locked vault balances as collateral through the configured credit-line contract path.',
+    icon: CoinsIcon,
+  },
+  {
+    title: 'Delegated claims',
+    description:
+      'Authorize an agent to trigger eligible mature claims without redirecting user funds.',
+    icon: SparklesIcon,
+  },
+];
+
+const flowSteps = [
+  ['Create', 'Pick chain, amount, duration, vault type, and any advanced release settings.'],
+  ['Settle', 'Approve only when needed, then submit the wallet transaction for CCTP settlement.'],
+  ['Track', 'Watch maturity, lifecycle accounting, reserve status, and add-funds activity.'],
+  ['Claim', 'Withdraw at maturity, use flexible emergency exit, or delegate eligible claims.'],
+];
 
 export default function Home() {
   const { isConnected, connect } = useWallet();
   const router = useRouter();
 
-  // Privy's connect() opens a modal and returns immediately - it doesn't await full login
-  // completion the way the old direct SIWE flow did. Navigate once the session actually
-  // finishes (isConnected flips true), rather than right after the modal opens.
+  // Privy's connect() opens a modal immediately. Wait for the session to finish before routing.
   useEffect(() => {
     if (isConnected) {
       router.push('/dashboard');
@@ -40,226 +88,205 @@ export default function Home() {
   return (
     <>
       <Header />
-      <main className="min-h-screen bg-gradient-to-b from-dark via-dark to-dark/95">
-        {/* Hero Section */}
-        <section className="px-4 pt-20 pb-16 sm:pt-32 sm:pb-24">
-          <div className="max-w-4xl mx-auto text-center">
-            <div className="mb-8">
-              <span className="inline-flex items-center px-4 py-2 bg-primary/10 border border-primary/20 rounded-full text-primary text-sm font-medium">
-                <LockIcon className="mr-2 h-4 w-4" />
-                Testnet Release
-              </span>
+      <main className="min-h-screen bg-dark">
+        <section className="border-b border-primary/10 px-4 py-20 sm:py-28">
+          <div className="mx-auto max-w-6xl">
+            <div className="grid grid-cols-1 gap-12 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
+              <div>
+                <div className="mb-8 flex flex-wrap gap-3">
+                  {trustPoints.map((point) => (
+                    <span
+                      key={point}
+                      className="inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary"
+                    >
+                      <CheckIcon className="mr-2 h-4 w-4" />
+                      {point}
+                    </span>
+                  ))}
+                </div>
+
+                <h1 className="max-w-4xl text-5xl font-bold leading-tight text-light sm:text-7xl">
+                  Non-custodial USDC vaults for Arc.
+                </h1>
+
+                <p className="mt-6 max-w-2xl text-lg leading-8 text-light/70 sm:text-xl">
+                  CHRONOS lets users lock, track, add, claim, and withdraw testnet USDC through
+                  transparent time-based vaults. Settlement lives on Arc; wallet authority stays
+                  with the user.
+                </p>
+
+                <div className="mt-10 flex flex-col gap-4 sm:flex-row">
+                  <button
+                    onClick={handleGetStarted}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-8 py-4 text-lg font-bold text-dark hover:bg-primary/90"
+                  >
+                    {isConnected ? 'Go to Dashboard' : 'Create Vault'}
+                    <ArrowRightIcon className="h-5 w-5" />
+                  </button>
+                  <Link
+                    href="/docs"
+                    className="inline-flex items-center justify-center rounded-lg border-2 border-primary px-8 py-4 text-lg font-bold text-primary hover:bg-primary/10"
+                  >
+                    Read Docs
+                  </Link>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-primary/10 bg-dark/70 p-6">
+                <div className="mb-6 flex items-center justify-between border-b border-primary/10 pb-4">
+                  <div>
+                    <p className="text-sm text-light/50">Vault status</p>
+                    <h2 className="text-2xl font-bold text-light">Arc settlement view</h2>
+                  </div>
+                  <ShieldIcon className="h-10 w-10 text-primary" />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  {[
+                    ['Vault types', 'Fixed / Flexible'],
+                    ['Source chains', 'Sepolia routes'],
+                    ['Reserve path', 'Public + live'],
+                    ['Automation', 'Keeper running'],
+                  ].map(([label, value]) => (
+                    <div key={label} className="rounded-lg border border-primary/10 bg-primary/5 p-4">
+                      <p className="text-xs text-light/50">{label}</p>
+                      <p className="mt-2 font-semibold text-light">{value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-6 rounded-lg border border-primary/10 bg-dark p-4">
+                  <p className="text-sm font-semibold text-primary">Production backend</p>
+                  <p className="mt-2 break-all font-mono text-xs text-light/60">
+                    chronos-backend-production.up.railway.app
+                  </p>
+                </div>
+              </div>
             </div>
+          </div>
+        </section>
 
-            <h1 className="text-5xl sm:text-7xl font-bold text-light mb-6 leading-tight">
-              Lock USDC, <br />
-              <span className="text-primary">Unlock Discipline</span>
-            </h1>
-
-            <p className="text-xl text-light/70 max-w-2xl mx-auto mb-12">
-              Multi-token time-locked savings infrastructure on Arc Testnet.
-              FIXED vaults for strict discipline. FLEXIBLE vaults for emergencies.
-              Zero custody risk.
-            </p>
-
-            <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
-              <button
-                onClick={handleGetStarted}
-                className="px-8 py-4 bg-primary text-dark font-bold rounded-lg hover:bg-primary/90 transition-all text-lg"
-              >
-                {isConnected ? 'Go to Dashboard' : 'Create Vault'}
-              </button>
-              <Link
-                href="/features"
-                className="px-8 py-4 border-2 border-primary text-primary font-bold rounded-lg hover:bg-primary/10 transition-all text-lg"
-              >
-                Learn More
+        <section className="border-b border-primary/10 px-4 py-16">
+          <div className="mx-auto max-w-6xl">
+            <div className="mb-10 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-wide text-primary">
+                  Product surface
+                </p>
+                <h2 className="mt-3 text-3xl font-bold text-light sm:text-4xl">
+                  Built around vault behavior, not vague yield promises.
+                </h2>
+              </div>
+              <Link href="/features" className="inline-flex items-center gap-2 font-semibold text-primary">
+                Full feature list
+                <ArrowRightIcon className="h-4 w-4" />
               </Link>
             </div>
 
-            {/* Stats */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 mt-20">
-              <div className="bg-dark/50 border border-primary/10 rounded-lg p-6">
-                <div className="text-3xl font-bold text-primary mb-2">$0</div>
-                <div className="text-light/60 text-sm">Total Locked</div>
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {primaryFeatures.map(({ title, description, icon: Icon }) => (
+                <article key={title} className="card">
+                  <Icon className="mb-5 h-9 w-9 text-primary" />
+                  <h3 className="text-xl font-bold text-light">{title}</h3>
+                  <p className="mt-3 text-sm leading-6 text-light/70">{description}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="border-b border-primary/10 bg-primary/5 px-4 py-16">
+          <div className="mx-auto max-w-6xl">
+            <div className="grid grid-cols-1 gap-10 lg:grid-cols-[0.85fr_1.15fr]">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-wide text-primary">
+                  Flow
+                </p>
+                <h2 className="mt-3 text-3xl font-bold text-light sm:text-4xl">
+                  The main path is simple. The controls are explicit.
+                </h2>
+                <p className="mt-4 text-light/70">
+                  Users should always know whether they are choosing vault terms, signing a wallet
+                  transaction, waiting for settlement, or claiming settled funds.
+                </p>
               </div>
-              <div className="bg-dark/50 border border-primary/10 rounded-lg p-6">
-                <div className="text-3xl font-bold text-primary mb-2">0</div>
-                <div className="text-light/60 text-sm">Active Vaults</div>
-              </div>
-              <div className="bg-dark/50 border border-primary/10 rounded-lg p-6">
-                <div className="text-3xl font-bold text-primary mb-2">0</div>
-                <div className="text-light/60 text-sm">Community Members</div>
+
+              <div className="space-y-4">
+                {flowSteps.map(([title, body], index) => (
+                  <div key={title} className="rounded-lg border border-primary/10 bg-dark/70 p-5">
+                    <div className="flex gap-4">
+                      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-primary text-sm font-bold text-dark">
+                        {index + 1}
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-light">{title}</h3>
+                        <p className="mt-2 text-sm leading-6 text-light/70">{body}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
         </section>
 
-        {/* Features Section */}
-        <section id="features" className="px-4 py-20">
-          <div className="max-w-6xl mx-auto">
-            <h2 className="text-4xl font-bold text-light text-center mb-16">Why CHRONOS?</h2>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {/* Feature 1 */}
-              <div className="card">
-                <LockIcon className="h-10 w-10 mb-4 text-primary" />
-                <h3 className="text-xl font-bold text-light mb-3">Non-Custodial</h3>
-                <p className="text-light/70">
-                  You control your keys. We never hold your tokens. All settlement on Arc Testnet.
-                </p>
+        <section className="px-4 py-16">
+          <div className="mx-auto grid max-w-6xl grid-cols-1 gap-6 lg:grid-cols-3">
+            <div className="rounded-lg border border-primary/10 bg-dark/70 p-6 lg:col-span-2">
+              <ChartIcon className="mb-5 h-9 w-9 text-primary" />
+              <h2 className="text-3xl font-bold text-light">Reserve visibility is public.</h2>
+              <p className="mt-4 max-w-2xl leading-7 text-light/70">
+                The proof-of-reserves page is available without wallet login. The backend also
+                exposes a live verification path so demo-critical reserve claims can be checked
+                against contract state instead of dashboard numbers alone.
+              </p>
+              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+                <Link href="/proof-of-reserves" className="btn-primary inline-flex justify-center">
+                  View Reserves
+                </Link>
+                <Link href="/docs#operations" className="btn-ghost inline-flex justify-center">
+                  Operator Notes
+                </Link>
               </div>
+            </div>
 
-              {/* Feature 2 */}
-              <div className="card">
-                <ClockIcon className="h-10 w-10 mb-4 text-primary" />
-                <h3 className="text-xl font-bold text-light mb-3">FIXED Vaults</h3>
-                <p className="text-light/70">
-                  Immutable unlock dates. Zero early withdrawal. Maximum discipline. 0% penalty.
-                </p>
-              </div>
-
-              {/* Feature 3 */}
-              <div className="card">
-                <ShieldIcon className="h-10 w-10 mb-4 text-primary" />
-                <h3 className="text-xl font-bold text-light mb-3">FLEXIBLE Vaults</h3>
-                <p className="text-light/70">
-                  Emergency withdrawals anytime. 0.5% penalty if before unlock. 0% at maturity.
-                </p>
-              </div>
-
-              {/* Feature 4 */}
-              <div className="card">
-                <BridgeIcon className="h-10 w-10 mb-4 text-primary" />
-                <h3 className="text-xl font-bold text-light mb-3">Multi-Chain</h3>
-                <p className="text-light/70">
-                  Deposit from Base, Arbitrum, or Ethereum. Settle on Arc. Claim back on source.
-                </p>
-              </div>
-
-              {/* Feature 5 */}
-              <div className="card">
-                <ChartIcon className="h-10 w-10 mb-4 text-primary" />
-                <h3 className="text-xl font-bold text-light mb-3">Proof of Reserves</h3>
-                <p className="text-light/70">
-                  Real-time transparency. Auditable on-chain. Smart contract verified.
-                </p>
-              </div>
-
-              {/* Feature 6 */}
-              <div className="card">
-                <PlusIcon className="h-10 w-10 mb-4 text-primary" />
-                <h3 className="text-xl font-bold text-light mb-3">Add to Vault</h3>
-                <p className="text-light/70">
-                  Extend with new deposits. Same unlock date. Keep growing your discipline.
-                </p>
+            <div className="rounded-lg border border-primary/10 bg-dark/70 p-6">
+              <h3 className="text-xl font-bold text-light">Useful links</h3>
+              <div className="mt-5 space-y-3">
+                {[
+                  ['/features', 'Features'],
+                  ['/docs', 'Docs'],
+                  ['/dashboard/lend', 'Credit lines'],
+                  ['/dashboard/treasury-payments', 'Treasury payments'],
+                ].map(([href, label]) => (
+                  <Link
+                    key={href}
+                    href={href}
+                    className="flex items-center justify-between rounded-lg border border-primary/10 px-4 py-3 text-sm font-semibold text-light/80 hover:border-primary/30 hover:text-primary"
+                  >
+                    {label}
+                    <ArrowRightIcon className="h-4 w-4" />
+                  </Link>
+                ))}
               </div>
             </div>
           </div>
         </section>
 
-        {/* How It Works */}
-        <section className="px-4 py-20 bg-dark/50">
-          <div className="max-w-4xl mx-auto">
-            <h2 className="text-4xl font-bold text-light text-center mb-16">How It Works</h2>
-
-            <div className="space-y-8">
-              <div className="flex gap-6">
-                <div className="flex-shrink-0 w-12 h-12 rounded-full bg-primary text-dark flex items-center justify-center font-bold text-lg">
-                  1
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-light mb-2">Create Vault</h3>
-                  <p className="text-light/70">
-                    Choose FIXED or FLEXIBLE. Set amount and lock duration (5 mins to 12 months in test mode).
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex gap-6">
-                <div className="flex-shrink-0 w-12 h-12 rounded-full bg-primary text-dark flex items-center justify-center font-bold text-lg">
-                  2
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-light mb-2">Bridge & Lock</h3>
-                  <p className="text-light/70">
-                    Tokens are bridged from your source chain to Arc Testnet via Circle CCTP.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex gap-6">
-                <div className="flex-shrink-0 w-12 h-12 rounded-full bg-primary text-dark flex items-center justify-center font-bold text-lg">
-                  3
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-light mb-2">Wait & Watch</h3>
-                  <p className="text-light/70">
-                    Real-time countdown timer. Add more deposits anytime. Manage from dashboard.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex gap-6">
-                <div className="flex-shrink-0 w-12 h-12 rounded-full bg-primary text-dark flex items-center justify-center font-bold text-lg">
-                  4
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-light mb-2">Claim at Maturity</h3>
-                  <p className="text-light/70">
-                    Unlock date reached. Claim tokens back to your source chain. Instant settlement.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Trust Section */}
-        <section className="px-4 py-20">
-          <div className="max-w-4xl mx-auto text-center">
-            <h2 className="text-3xl font-bold text-light mb-12">Built for Trust</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-8 text-center">
-              <div>
-                <CheckIcon className="mx-auto h-10 w-10 mb-3 text-primary" />
-                <div className="text-light/70 text-sm">Non-Custodial</div>
-              </div>
-              <div>
-                <CheckIcon className="mx-auto h-10 w-10 mb-3 text-primary" />
-                <div className="text-light/70 text-sm">Auditable</div>
-              </div>
-              <div>
-                <CheckIcon className="mx-auto h-10 w-10 mb-3 text-primary" />
-                <div className="text-light/70 text-sm">Open-Source</div>
-              </div>
-              <div>
-                <CheckIcon className="mx-auto h-10 w-10 mb-3 text-primary" />
-                <div className="text-light/70 text-sm">Smart Contract Verified</div>
-              </div>
-              <div>
-                <CheckIcon className="mx-auto h-10 w-10 mb-3 text-primary" />
-                <div className="text-light/70 text-sm">Zero Fees (Testnet)</div>
-              </div>
-              <div>
-                <CheckIcon className="mx-auto h-10 w-10 mb-3 text-primary" />
-                <div className="text-light/70 text-sm">Real-Time Stats</div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* CTA Section */}
-        <section className="px-4 py-20 bg-gradient-to-r from-primary/10 to-accent/10 border-t border-primary/20">
-          <div className="max-w-2xl mx-auto text-center">
-            <h2 className="text-3xl font-bold text-light mb-6">Ready to Lock & Earn Discipline?</h2>
-            <p className="text-light/70 mb-8">
-              Join the testnet. Lock your first vault. Start your savings journey with CHRONOS.
+        <section className="border-t border-primary/10 px-4 py-16">
+          <div className="mx-auto max-w-3xl text-center">
+            <h2 className="text-3xl font-bold text-light">
+              Start with a vault. Inspect everything after.
+            </h2>
+            <p className="mt-4 text-light/70">
+              CHRONOS is a testnet release. Bring a wallet, use testnet assets, and treat every
+              signing step as part of the product.
             </p>
             <button
               onClick={handleGetStarted}
-              className="px-8 py-4 bg-primary text-dark font-bold rounded-lg hover:bg-primary/90 transition-all text-lg"
+              className="mt-8 rounded-lg bg-primary px-8 py-4 text-lg font-bold text-dark hover:bg-primary/90"
             >
-              {isConnected ? 'Go to Dashboard' : 'Get Started'}
+              {isConnected ? 'Go to Dashboard' : 'Open App'}
             </button>
           </div>
         </section>
