@@ -20,36 +20,36 @@ export default function Header() {
 
   return (
     <header className="sticky top-0 z-50 bg-dark/95 backdrop-blur-sm border-b border-primary/10">
-      <div className="max-w-7xl mx-auto px-4">
-        <div className="grid grid-cols-[1fr_auto_1fr] items-center h-16">
-          <Link href="/" className="flex items-center gap-2 font-bold text-xl text-primary">
+      <div className="mx-auto max-w-[1400px] px-4 sm:px-6">
+        <div className="grid h-14 grid-cols-[1fr_auto_1fr] items-center">
+          <Link href="/" className="flex items-center gap-2 text-lg font-bold text-primary">
             <Image
               src="/chronos-logo.png"
               alt="CHRONOS"
-              width={72}
-              height={72}
-              className="h-[72px] w-[72px] object-contain"
+              width={56}
+              height={56}
+              className="h-14 w-14 object-contain"
               priority
             />
             <span>CHRONOS</span>
           </Link>
 
-          <nav className="hidden md:flex items-center justify-center gap-8">
-            <Link href="/features" className="text-light/70 hover:text-primary transition-colors">
+          <nav className="hidden items-center justify-center gap-7 md:flex">
+            <Link href="/features" className="text-sm font-medium text-light/70 hover:text-primary transition-colors">
               Features
             </Link>
-            <Link href="/docs" className="text-light/70 hover:text-primary transition-colors">
+            <Link href="/docs" className="text-sm font-medium text-light/70 hover:text-primary transition-colors">
               Docs
             </Link>
             {isConnected && (
               <>
-                <Link href="/dashboard" className="text-light/70 hover:text-primary transition-colors">
+                <Link href="/dashboard" className="text-sm font-medium text-light/70 hover:text-primary transition-colors">
                   Dashboard
                 </Link>
-                <Link href="/dashboard/proof-of-reserves" className="text-light/70 hover:text-primary transition-colors">
+                <Link href="/dashboard/proof-of-reserves" className="text-sm font-medium text-light/70 hover:text-primary transition-colors">
                   Reserves
                 </Link>
-                <Link href="/dashboard/activity" className="text-light/70 hover:text-primary transition-colors">
+                <Link href="/dashboard/activity" className="text-sm font-medium text-light/70 hover:text-primary transition-colors">
                   Activity
                 </Link>
               </>
@@ -86,7 +86,7 @@ export default function Header() {
               <button
                 onClick={() => connect()}
                 disabled={isLoading}
-                className="px-6 py-2 bg-primary text-dark font-semibold rounded-lg hover:bg-primary/90 transition-colors"
+                className="rounded-lg bg-primary px-5 py-2 text-sm font-semibold text-dark hover:bg-primary/90 transition-colors"
               >
                 {isLoading ? 'Connecting...' : 'Connect'}
               </button>

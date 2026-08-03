@@ -89,73 +89,73 @@ export default function Home() {
     <>
       <Header />
       <main className="min-h-screen bg-dark">
-        <section className="border-b border-primary/10 px-4 py-20 sm:py-28">
-          <div className="mx-auto max-w-6xl">
-            <div className="grid grid-cols-1 gap-12 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
+        <section className="border-b border-primary/10 px-4 py-14 sm:py-20">
+          <div className="mx-auto max-w-[1050px]">
+            <div className="grid grid-cols-1 gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
               <div>
-                <div className="mb-8 flex flex-wrap gap-3">
+                <div className="mb-6 flex flex-wrap gap-2.5">
                   {trustPoints.map((point) => (
                     <span
                       key={point}
-                      className="inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary"
+                      className="inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary"
                     >
-                      <CheckIcon className="mr-2 h-4 w-4" />
+                      <CheckIcon className="mr-2 h-3.5 w-3.5" />
                       {point}
                     </span>
                   ))}
                 </div>
 
-                <h1 className="max-w-4xl text-5xl font-bold leading-tight text-light sm:text-7xl">
+                <h1 className="max-w-3xl text-4xl font-bold leading-tight text-light sm:text-6xl lg:text-[4.75rem]">
                   Non-custodial USDC vaults for Arc.
                 </h1>
 
-                <p className="mt-6 max-w-2xl text-lg leading-8 text-light/70 sm:text-xl">
+                <p className="mt-6 max-w-xl text-base leading-7 text-light/70 sm:text-lg">
                   CHRONOS lets users lock, track, add, claim, and withdraw testnet USDC through
                   transparent time-based vaults. Settlement lives on Arc; wallet authority stays
                   with the user.
                 </p>
 
-                <div className="mt-10 flex flex-col gap-4 sm:flex-row">
+                <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                   <button
                     onClick={handleGetStarted}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-8 py-4 text-lg font-bold text-dark hover:bg-primary/90"
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-7 py-3.5 text-base font-bold text-dark hover:bg-primary/90"
                   >
                     {isConnected ? 'Go to Dashboard' : 'Create Vault'}
-                    <ArrowRightIcon className="h-5 w-5" />
+                    <ArrowRightIcon className="h-4 w-4" />
                   </button>
                   <Link
                     href="/docs"
-                    className="inline-flex items-center justify-center rounded-lg border-2 border-primary px-8 py-4 text-lg font-bold text-primary hover:bg-primary/10"
+                    className="inline-flex items-center justify-center rounded-lg border-2 border-primary px-7 py-3.5 text-base font-bold text-primary hover:bg-primary/10"
                   >
                     Read Docs
                   </Link>
                 </div>
               </div>
 
-              <div className="rounded-lg border border-primary/10 bg-dark/70 p-6">
-                <div className="mb-6 flex items-center justify-between border-b border-primary/10 pb-4">
+              <div className="rounded-lg border border-primary/10 bg-dark/70 p-5">
+                <div className="mb-5 flex items-center justify-between border-b border-primary/10 pb-4">
                   <div>
-                    <p className="text-sm text-light/50">Vault status</p>
-                    <h2 className="text-2xl font-bold text-light">Arc settlement view</h2>
+                    <p className="text-xs text-light/50">Vault status</p>
+                    <h2 className="text-xl font-bold text-light">Arc settlement view</h2>
                   </div>
-                  <ShieldIcon className="h-10 w-10 text-primary" />
+                  <ShieldIcon className="h-8 w-8 text-primary" />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-3">
                   {[
                     ['Vault types', 'Fixed / Flexible'],
                     ['Source chains', 'Sepolia routes'],
                     ['Reserve path', 'Public + live'],
                     ['Automation', 'Keeper running'],
                   ].map(([label, value]) => (
-                    <div key={label} className="rounded-lg border border-primary/10 bg-primary/5 p-4">
+                    <div key={label} className="rounded-lg border border-primary/10 bg-primary/5 p-3.5">
                       <p className="text-xs text-light/50">{label}</p>
-                      <p className="mt-2 font-semibold text-light">{value}</p>
+                      <p className="mt-2 text-sm font-semibold text-light">{value}</p>
                     </div>
                   ))}
                 </div>
 
-                <div className="mt-6 rounded-lg border border-primary/10 bg-dark p-4">
+                <div className="mt-5 rounded-lg border border-primary/10 bg-dark p-3.5">
                   <p className="text-sm font-semibold text-primary">Production backend</p>
                   <p className="mt-2 break-all font-mono text-xs text-light/60">
                     chronos-backend-production.up.railway.app
