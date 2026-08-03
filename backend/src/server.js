@@ -17,6 +17,7 @@ import creditLineRoutes from './routes/creditLine.js';
 import { eventListenerService } from './services/eventListenerService.js';
 import { bridgeTrackerService } from './services/bridgeTrackerService.js';
 import { scheduledPaymentService } from './services/scheduledPaymentService.js';
+import { startAgentKeeper, stopAgentKeeper, isAgentKeeperRunning } from './services/vaultAgentService.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -80,7 +81,8 @@ app.get('/health', (req, res) => {
     services: {
       eventListener: eventListenerService.isRunning ? 'running' : 'stopped',
       bridgeTracker: bridgeTrackerService.isRunning ? 'running' : 'stopped',
-      scheduledPaymentKeeper: scheduledPaymentService.isRunning ? 'running' : 'stopped'
+      scheduledPaymentKeeper: scheduledPaymentService.isRunning ? 'running' : 'stopped',
+      vaultAgentKeeper: isAgentKeeperRunning() ? 'running' : 'stopped'
     }
   });
 });
@@ -114,6 +116,7 @@ server.on('listening', () => {
   eventListenerService.start();
   bridgeTrackerService.start();
   scheduledPaymentService.start();
+  startAgentKeeper();
 
   logger.info('Background services started');
 });
@@ -135,6 +138,7 @@ process.on('SIGTERM', () => {
   eventListenerService.stop();
   bridgeTrackerService.stop();
   scheduledPaymentService.stop();
+  stopAgentKeeper();
 
   server.close(() => {
     logger.info('Server closed');

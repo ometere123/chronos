@@ -16,10 +16,13 @@
 // findEligibleDelegatedVaults() checks delegation against the smart account address, since
 // that's the identity vault owners should actually authorize via setVaultDelegate().
 import { ethers } from 'ethers';
+import cron from 'node-cron';
 import { initiateDeveloperControlledWalletsClient } from '@circle-fin/developer-controlled-wallets';
 import { contractAddresses } from '../config/contracts.js';
 import { getAgentSmartAccountAddress, sendSponsoredCall, waitForSponsoredCall } from './agentSmartAccountService.js';
 import logger from '../config/logger.js';
+
+const DEFAULT_AGENT_CRON_EXPRESSION = process.env.VAULT_AGENT_CRON || '*/1 * * * *'; // every minute
 
 const TIME_LOCK_VAULT_ABI = [
   'function getAllVaultIds() view returns (bytes32[])',
@@ -139,4 +142,64 @@ export async function runAgentPass() {
   }
 
   return results;
+}
+
+// ---------------------------------------------------------------------------
+// KEEPER - runAgentPass() above was fully built but never actually invoked anywhere: no cron,
+// no route, nothing. A vault owner could delegate to the agent on-chain and it would just sit
+// there forever, since nothing ever asked "is anything eligible yet?". Mirrors the node-cron
+// keeper pattern in scheduledPaymentService.js.
+// ---------------------------------------------------------------------------
+
+let agentTask = null;
+let agentKeeperRunning = false;
+let agentPassInFlight = false;
+
+export function isAgentConfigured() {
+  return Boolean(
+    process.env.AGENT_SA_OWNER_PRIVATE_KEY &&
+    process.env.PIMLICO_API_KEY &&
+    contractAddresses.timeLockVault
+  );
+}
+
+export function startAgentKeeper(cronExpression = DEFAULT_AGENT_CRON_EXPRESSION) {
+  if (agentKeeperRunning) {
+    logger.warn('Vault agent keeper already running');
+    return;
+  }
+
+  if (!isAgentConfigured()) {
+    logger.warn('Vault agent keeper not started: missing AGENT_SA_OWNER_PRIVATE_KEY, PIMLICO_API_KEY, or ARC_TIMELOCK_VAULT address');
+    return;
+  }
+
+  agentTask = cron.schedule(cronExpression, () => {
+    if (agentPassInFlight) {
+      return;
+    }
+    agentPassInFlight = true;
+    runAgentPass()
+      .catch((err) => {
+        logger.error('Vault agent keeper tick failed', { error: err.message });
+      })
+      .finally(() => {
+        agentPassInFlight = false;
+      });
+  });
+
+  agentKeeperRunning = true;
+  logger.info('Vault agent keeper started', { cronExpression });
+}
+
+export function stopAgentKeeper() {
+  if (agentTask) {
+    agentTask.stop();
+  }
+  agentKeeperRunning = false;
+  logger.info('Vault agent keeper stopped');
+}
+
+export function isAgentKeeperRunning() {
+  return agentKeeperRunning;
 }
