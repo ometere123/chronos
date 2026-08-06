@@ -38,6 +38,11 @@ export function useWallet() {
   const { wallets, ready: walletsReady } = useWallets();
   const [isReady, setIsReady] = useState(false);
   const exchangingRef = useRef(false);
+  // Privy's `wallets` array gets a new reference on unrelated re-renders, which re-runs the
+  // session-exchange effect below. Without this guard, a single failed exchange (e.g. backend
+  // misconfiguration) retries in a tight loop instead of surfacing one clean error - tracks the
+  // wallet address the LAST failure was for, so we only try again if the user reconnects.
+  const failedExchangeAddressRef = useRef<string | null>(null);
 
   const address = authUser?.address ?? null;
 
@@ -45,6 +50,7 @@ export function useWallet() {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(ADDRESS_KEY);
     clearAuthStore();
+    failedExchangeAddressRef.current = null;
     try {
       await privyLogout();
     } catch {
@@ -82,6 +88,7 @@ export function useWallet() {
 
     const walletAddress = normalizeAddress(wallet.address);
     if (address === walletAddress && token) return; // already exchanged
+    if (failedExchangeAddressRef.current === walletAddress) return; // already failed, don't loop
 
     exchangingRef.current = true;
     setIsLoading(true);
@@ -110,6 +117,7 @@ export function useWallet() {
       } catch (err: any) {
         const message = err?.response?.data?.error?.message ?? err?.message ?? 'Session exchange failed.';
         setError(message);
+        failedExchangeAddressRef.current = walletAddress;
       } finally {
         setIsLoading(false);
         exchangingRef.current = false;
@@ -125,6 +133,7 @@ export function useWallet() {
 
   const connect = useCallback(async () => {
     setError(null);
+    failedExchangeAddressRef.current = null;
     login();
   }, [login, setError]);
 
